@@ -1,0 +1,53 @@
+name: control-layer-ci-gate
+on:
+  push:
+    paths: ["**.json", "**.py", ".github/workflows/**"]
+  pull_request:
+    paths: ["**.json", "**.py", ".github/workflows/**"]
+  workflow_dispatch:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install -r requirements.txt
+
+      - name: Run pre-commit (validate missions)
+        run: |
+          pre-commit run --all-files || true
+
+      - name: Run CI Gate with fault sweep
+        run: |
+          python src/ci_gate.py --missions_glob "missions/mission_*.json" --ticks 200 --sweep
+
+      - name: Collect runner logs & summary
+        if: always()
+        run: |
+          mkdir -p artifacts
+          cp fault_sweep_summary.json artifacts/fault_sweep_summary.json || true
+
+          for f in missions/mission_*.json; do
+            bn=$(basename "$f" .json)
+            # We don't know Fmax here; cap artifact collection to 50 by default.
+            for n in $(seq 0 50); do
+              d="runner_logs_${bn}_faults${n}"
+              if [ -d "$d" ]; then
+                cp "$d"/timeline.csv "artifacts/timeline_${bn}_faults${n}.csv" || true
+                cp "$d"/matrix.csv   "artifacts/matrix_${bn}_faults${n}.csv"   || true
+              fi
+            done
+          done
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-layer-logs-and-summary
+          path: artifacts

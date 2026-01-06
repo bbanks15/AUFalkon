@@ -1,16 +1,10 @@
-
-# Python
 __pycache__/
 *.pyc
 .venv/
 venv/
-
-# Logs & artifacts
 runner_logs*/
 gui_logs/
 artifacts/
 *.csv
 fault_sweep_summary.json
-
-# OS
 .DS_Store
