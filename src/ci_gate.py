@@ -7,21 +7,17 @@ def run_cmd(cmd):
     return p.returncode, out, err
 
 def parse_runner_output(stdout_text: str, stderr_text: str, rc: int):
-    """
-    Prefer strict JSON. Fallback to python literal dict.
-    If parsing fails, return a structured FAIL object with stdout/stderr embedded.
-    """
     stdout_text = (stdout_text or "").strip()
     stderr_text = (stderr_text or "").strip()
 
-    # Strict JSON first (expected once mission_runner prints json.dumps)
+    # Preferred: strict JSON
     try:
         if stdout_text:
             return json.loads(stdout_text)
     except Exception:
         pass
 
-    # Fallback: python literal dict (legacy runner output)
+    # Fallback: python literal dict
     try:
         if stdout_text:
             obj = ast.literal_eval(stdout_text)
@@ -30,7 +26,6 @@ def parse_runner_output(stdout_text: str, stderr_text: str, rc: int):
     except Exception:
         pass
 
-    # If we got here, output was not parseable. Preserve evidence.
     return {
         "status": "FAIL" if rc != 0 else "UNKNOWN",
         "error": (
@@ -60,7 +55,7 @@ def main():
         # Validate mission and compute Fmax
         rc, out, err = run_cmd([sys.executable, 'src/mission_validator.py', m, '--capacity', str(args.capacity_per_unit)])
         if rc != 0:
-            all_failures.append({'mission': m, 'stage': 'validator_failed', 'error': err.strip() or out.strip()})
+            all_failures.append({'mission': m, 'stage': 'validator_failed', 'error': (err or out).strip()})
             continue
 
         try:
@@ -99,7 +94,7 @@ def main():
                 'status': rj.get('status', 'UNKNOWN'),
                 'error': rj.get('error', ''),
                 'logs_dir': logs_dir,
-                # Keep evidence if something went wrong
+                'run_summary': rj.get('run_summary', {}),
                 'stderr': (err2 or '').strip() if (rc2 != 0 or rj.get('status') != 'PASS') else ''
             })
 
