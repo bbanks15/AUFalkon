@@ -93,4 +93,4 @@ if __name__ == '__main__':
     args = ap.parse_args()
 
     result = run_mission(args.mission, args.ticks, args.logs_dir, args.initial_faults, args.capacity_per_unit)
-    print(result)
+    print(json.dumps(result))
