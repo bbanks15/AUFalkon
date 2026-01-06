@@ -1,11 +1,44 @@
-import sys, json, argparse, glob, os, subprocess
 
+import sys, json, argparse, glob, os, subprocess, ast
 
 def run_cmd(cmd):
     p = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
     out, err = p.communicate()
     return p.returncode, out, err
 
+def parse_runner_output(stdout_text: str, stderr_text: str, rc: int):
+    """
+    Prefer strict JSON. Fallback to python literal dict.
+    If parsing fails, return a structured FAIL object with stdout/stderr embedded.
+    """
+    stdout_text = (stdout_text or "").strip()
+    stderr_text = (stderr_text or "").strip()
+
+    # Strict JSON first (expected once mission_runner prints json.dumps)
+    try:
+        if stdout_text:
+            return json.loads(stdout_text)
+    except Exception:
+        pass
+
+    # Fallback: python literal dict (legacy runner output)
+    try:
+        if stdout_text:
+            obj = ast.literal_eval(stdout_text)
+            if isinstance(obj, dict):
+                return obj
+    except Exception:
+        pass
+
+    # If we got here, output was not parseable. Preserve evidence.
+    return {
+        "status": "FAIL" if rc != 0 else "UNKNOWN",
+        "error": (
+            f"Unparseable runner output. rc={rc}\n"
+            f"STDOUT:\n{stdout_text}\n"
+            f"STDERR:\n{stderr_text}"
+        )
+    }
 
 def main():
     ap = argparse.ArgumentParser()
@@ -27,9 +60,15 @@ def main():
         # Validate mission and compute Fmax
         rc, out, err = run_cmd([sys.executable, 'src/mission_validator.py', m, '--capacity', str(args.capacity_per_unit)])
         if rc != 0:
-            all_failures.append({'mission': m, 'stage': 'validator_failed', 'error': err})
+            all_failures.append({'mission': m, 'stage': 'validator_failed', 'error': err.strip() or out.strip()})
             continue
-        v = json.loads(out)
+
+        try:
+            v = json.loads(out)
+        except Exception:
+            all_failures.append({'mission': m, 'stage': 'validator_bad_json', 'error': out.strip()})
+            continue
+
         if not v.get('feasible', False):
             all_failures.append({'mission': m, 'stage': 'infeasible', 'error': v})
             summary[m] = {'validator': v, 'sweep': []}
@@ -52,28 +91,27 @@ def main():
                 '--capacity_per_unit', str(args.capacity_per_unit)
             ])
 
-            # mission_runner prints a python dict; normalize
-            try:
-                rj = json.loads(out2.replace("'", '"'))
-            except Exception:
-                rj = {'status': 'UNKNOWN', 'error': out2.strip()}
+            rj = parse_runner_output(out2, err2, rc2)
 
             sweep_results.append({
                 'faults': faults,
+                'rc': rc2,
                 'status': rj.get('status', 'UNKNOWN'),
                 'error': rj.get('error', ''),
-                'logs_dir': logs_dir
+                'logs_dir': logs_dir,
+                # Keep evidence if something went wrong
+                'stderr': (err2 or '').strip() if (rc2 != 0 or rj.get('status') != 'PASS') else ''
             })
 
             if rj.get('status') != 'PASS':
-                all_failures.append({'mission': m, 'stage': f'fault_sweep_failure_faults={faults}', 'error': rj.get('error','')})
-                # Stop at first failure for efficiency
+                all_failures.append({
+                    'mission': m,
+                    'stage': f'fault_sweep_failure_faults={faults}',
+                    'error': rj.get('error', '') or (err2 or '').strip()
+                })
                 break
 
-        summary[m] = {
-            'validator': v,
-            'sweep': sweep_results
-        }
+        summary[m] = {'validator': v, 'sweep': sweep_results}
 
     with open('fault_sweep_summary.json', 'w', encoding='utf-8') as f:
         json.dump(summary, f, indent=2)
@@ -86,7 +124,6 @@ def main():
 
     print('CI GATE: PASS')
     sys.exit(0)
-
 
 if __name__ == '__main__':
     main()
