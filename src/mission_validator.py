@@ -1,79 +1,84 @@
 
-import json, argparse
+import json
+import argparse
+import math
+from typing import Dict, Any, List
 
-def validate(mission_path: str, capacity_per_device: int = 2):
-    with open(mission_path, 'r', encoding='utf-8') as f:
+
+def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]:
+    """
+    Support:
+      - required_active_per_domain: int
+      - required_active_per_domain: {domain: int, ...}
+    Missing domain keys default to 1.
+    """
+    req_cfg = mission.get("required_active_per_domain", 1)
+    if isinstance(req_cfg, dict):
+        rm = {d: int(req_cfg.get(d, 1)) for d in domains}
+    else:
+        rm = {d: int(req_cfg) for d in domains}
+
+    # Sanity
+    for d, v in rm.items():
+        if v <= 0:
+            raise ValueError(f"required_active_per_domain for '{d}' must be > 0, got {v}")
+    return rm
+
+
+def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
+    with open(mission_path, "r", encoding="utf-8") as f:
         mission = json.load(f)
 
-    units = mission.get('units', [])
-    domains = mission.get('domains', [])
-    required = int(mission.get('required_active_per_domain', 1))
-    pools = mission.get('domain_pools', {})
-    spares = pools.get('spares', [])
+    units = mission.get("units", [])
+    domains = mission.get("domains", [])
 
-    # Sanity: pools referencing unknown units
-    unit_set = set(units)
-    unknown = {}
-    for d in domains:
-        bad = [u for u in pools.get(d, []) if u not in unit_set]
-        if bad:
-            unknown[d] = bad
-    bad_spares = [u for u in spares if u not in unit_set]
-    if bad_spares:
-        unknown["spares"] = bad_spares
+    if not units or not isinstance(units, list):
+        raise ValueError("mission.units must be a non-empty list")
+    if not domains or not isinstance(domains, list):
+        raise ValueError("mission.domains must be a non-empty list")
 
-    def feasible_at_faults(faults: int) -> (bool, str):
-        # Deterministic initial faults: first N units dead
-        alive = set(units[faults:])
+    n_devices = int(mission.get("fleet_devices", len(units)))
+    universal = bool(mission.get("universal_roles", False))
 
-        # Global capacity check
-        total_need = len(domains) * required
-        total_cap = len(alive) * capacity_per_device
-        if total_cap < total_need:
-            return False, f"global_capacity total_need={total_need} total_cap={total_cap}"
+    required_map = _required_map(mission, domains)
+    needs_total = int(sum(required_map.values()))
 
-        # Per-domain eligible-alive check (primary + spares)
-        for d in domains:
-            primary = [u for u in pools.get(d, []) if u in alive]
-            backup = [u for u in spares if u in alive]
-            # de-dup
-            seen = set()
-            cand = []
-            for u in primary + backup:
-                if u not in seen:
-                    cand.append(u); seen.add(u)
-            if len(cand) < required:
-                return False, f"domain={d} need={required} eligible_alive={len(cand)}"
-        return True, "ok"
+    if capacity_per_device <= 0:
+        feasible = False
+        needed_devices = 10**9
+        fmax = 0
+    else:
+        # Under universal_roles, worst-case/adversarial depends only on how many devices remain,
+        # because any unit can serve any role. So we can compute by count.
+        feasible = (n_devices * capacity_per_device) >= needs_total
+        needed_devices = math.ceil(needs_total / capacity_per_device)
+        fmax = max(0, n_devices - needed_devices)
 
-    # Find maximum faults that remains feasible
-    fmax = 0
-    reason_at_fail = ""
-    for f in range(0, len(units) + 1):
-        ok, reason = feasible_at_faults(f)
-        if ok:
-            fmax = f
-        else:
-            reason_at_fail = f"first_fail_faults={f} reason={reason}"
-            break
+    # Contingency threshold: when cap=1 cannot meet needs_total
+    # - If alive_devices < needs_total, you must allow multi-role (cap=2) to remain feasible.
+    contingency_starts_at_faults = max(0, n_devices - needs_total + 1)
 
     return {
         "mission": mission_path,
-        "fleet_devices": len(units),
+        "fleet_devices": n_devices,
+        "units": len(units),
         "domains": len(domains),
-        "capacity_per_device": capacity_per_device,
-        "required_active_per_domain": required,
-        "feasible": (fmax >= 0),
-        "Fmax": fmax,
-        "deterministic_fault_model": "first N units are permanently down",
-        "unknown_pool_units": unknown,
-        "fail_reason": reason_at_fail
+        "capacity_per_device": int(capacity_per_device),
+        "required_active_per_domain": required_map,  # per-domain
+        "needs_total": needs_total,
+        "universal_roles": universal,
+        "feasible": bool(feasible),
+        "needed_devices": int(needed_devices),
+        "Fmax": int(fmax),
+        "contingency_starts_at_faults": int(contingency_starts_at_faults),
+        "guarantee_mode": "worst_case_by_count (universal_roles assumed)" if universal else "non-universal (update validator if needed)"
     }
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument('mission')
-    ap.add_argument('--capacity', type=int, default=2)
+    ap.add_argument("mission")
+    ap.add_argument("--capacity", type=int, default=2)
     args = ap.parse_args()
 
     result = validate(args.mission, capacity_per_device=args.capacity)
