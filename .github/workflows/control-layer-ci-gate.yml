@@ -1,3 +1,4 @@
+
 name: control-layer-ci-gate
 on:
   push:
@@ -40,8 +41,9 @@ jobs:
             for n in $(seq 0 50); do
               d="runner_logs_${bn}_faults${n}"
               if [ -d "$d" ]; then
-                cp "$d"/timeline.csv "artifacts/timeline_${bn}_faults${n}.csv" || true
-                cp "$d"/matrix.csv   "artifacts/matrix_${bn}_faults${n}.csv"   || true
+                cp "$d"/timeline.csv      "artifacts/timeline_${bn}_faults${n}.csv" || true
+                cp "$d"/matrix.csv        "artifacts/matrix_${bn}_faults${n}.csv" || true
+                cp "$d"/run_summary.json  "artifacts/run_summary_${bn}_faults${n}.json" || true
               fi
             done
           done
