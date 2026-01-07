@@ -1,22 +1,95 @@
 
 {
-  "name": "mission_fleet12_deadline_ms1",
+  "mission_window_ms": {
+    "start_ms": 0,
+    "end_ms": 60000
+  },
   "tick_ms": 1,
-  "rotation_period_ms": 120000,
-  "required_active": {
-    "radar_ir_gps": 4,
-    "comm_eoir": 4,
-    "network_test_only": 4
+  "universal_roles": true,
+  "domains": [
+    "radar_ir_gps",
+    "comm_eoir",
+    "network_test_only"
+  ],
+  "rotation": {
+    "rest_duration_ms": 30000,
+    "only_one_rest": true
   },
-  "battery": {
-    "max": 100,
-    "initial": 100,
-    "cost_interval_ms": 1000,
-    "rest_recharge": { "every_intervals": 3, "amount": 2 },
-    "domain_cost": { "radar_ir_gps": 3, "comm_eoir": 2, "network_test_only": 1 },
-    "cooldown": { "in_ms": 120000, "out_ms": 120000 }
+  "fairness": "deadline",
+  "constraints": {
+    "max_gap_ms": 10,
+    "jitter_budget_ms": 10
   },
+  "domain_weights": {
+    "radar_ir_gps": 1.0,
+    "comm_eoir": 0.9,
+    "network_test_only": 0.8
+  },
+  "fleet_id": 12,
+  "fleet_devices": 12,
   "units": [
-    "A","B","C","D","E","F","G","H","I","J","K","L"
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L"
+  ],
+  "required_active_per_domain": {
+    "radar_ir_gps": 2,
+    "comm_eoir": 2,
+    "network_test_only": 2
+  },
+  "domain_pools": {
+    "radar_ir_gps": [
+      "A",
+      "B",
+      "C"
+    ],
+    "comm_eoir": [
+      "D",
+      "E",
+      "F"
+    ],
+    "network_test_only": [
+      "G",
+      "H",
+      "I"
+    ],
+    "spares": [
+      "J",
+      "K",
+      "L"
+    ]
+  },
+  "failure_injections": [
+    {
+      "type": "unit_crash",
+      "unit": "A",
+      "at_ms": 6000,
+      "duration_ms": 3000,
+      "permanent": false
+    },
+    {
+      "type": "unit_crash",
+      "unit": "B",
+      "at_ms": 9000,
+      "duration_ms": 15000,
+      "permanent": true
+    },
+    {
+      "type": "effector_failure",
+      "unit": "H",
+      "domain": "network_test_only",
+      "at_ms": 12000,
+      "duration_ms": 8000,
+      "permanent": false
+    }
   ]
 }
