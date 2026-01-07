@@ -16,34 +16,77 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          # If you have a requirements.txt, include plotly there; else install directly
           if [ -f requirements.txt ]; then
             pip install -r requirements.txt
           else
-            pip install pandas matplotlib plotly
+            pip install plotly matplotlib
           fi
 
-      - name: Run mission simulation
+      - name: Run mission simulations (fleet4, fleet5, fleet12)
         run: |
-          python -c "from src.missions import load_default_mission; \
-                     from src.mission_runner import run_mission; \
-                     from datetime import datetime; \
-                     mission = load_default_mission(); \
-                     run_mission(mission, sim_ticks=240000, wall_start=datetime.utcnow())"
+          python - << 'PYCODE'
+          from datetime import datetime
+          from src.missions import load_mission
+          from src.mission_runner import run_mission
+          import os
+
+          missions = [
+              "missions/mission_fleet4_deadline_ms1.json",
+              "missions/mission_fleet5_deadline_ms1.json",
+              "missions/mission_fleet12_deadline_ms1.json",
+          ]
+
+          # Prepare separate logs per mission to avoid collisions (optional)
+          for mpath in missions:
+              mission = load_mission(mpath)
+              mname = os.path.splitext(os.path.basename(mpath))[0]
+              logs_dir = os.path.join("logs", mname)
+              res = run_mission(mission, sim_ticks=240000, wall_start=datetime.utcnow(), logs_dir=logs_dir)
+              print(f"Completed {mname}: {res}")
+          PYCODE
+
+      - name: Validate coverage (no gaps allowed)
+        run: |
+          # Validate each mission's coverage_summary.json
+          python - << 'PYCODE'
+          import os, sys, json
+          base = "logs"
+          failures = []
+          for d in os.listdir(base):
+              summary_path = os.path.join(base, d, "coverage_summary.json")
+              try:
+                  with open(summary_path, "r", encoding="utf-8") as f:
+                      summary = json.load(f)
+                  total_gaps = summary.get("total_gap_ticks", 0)
+                  if total_gaps > 0:
+                      failures.append((d, total_gaps))
+              except Exception as e:
+                  failures.append((d, f"missing/invalid: {e}"))
+          if failures:
+              print("❌ Coverage validation failed:")
+              for mname, info in failures:
+                  print(f"  - {mname}: {info}")
+              sys.exit(1)
+          else:
+              print("✅ Coverage validation passed for all missions.")
+              sys.exit(0)
+          PYCODE
 
       - name: Upload artifacts (logs + coverage)
         uses: actions/upload-artifact@v4
         with:
           name: control-layer-logs-and-summary
           path: |
-            logs/event_stream.log
-            logs/handoff_log.csv
-            logs/battery_log.csv
-            logs/coverage_report.html
-            logs/coverage_report.png
+            logs/**/event_stream.log
+            logs/**/handoff_log.csv
+            logs/**/battery_log.csv
+            logs/**/coverage_report.html
+            logs/**/coverage_report.png
+            logs/**/coverage_summary.json
           if-no-files-found: warn
+``
