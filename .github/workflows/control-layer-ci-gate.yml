@@ -43,11 +43,7 @@ jobs:
               if [ -d "$d" ]; then
                 cp "$d"/timeline.csv      "artifacts/timeline_${bn}_faults${n}.csv" || true
                 cp "$d"/matrix.csv        "artifacts/matrix_${bn}_faults${n}.csv" || true
-                cp "$d"/run_summary.json  "artifacts/run_summary_${bn}_faults${n}.json" || true                
-                cp "$d"/handoff_log.csv  "artifacts/handoff_${bn}_faults${n}.csv" || true
-                cp "$d"/fault_events.csv "artifacts/fault_events_${bn}_faults${n}.csv" || true
-                cp "$d"/event_stream.log "artifacts/event_stream_${bn}_faults${n}.log" || true
-
+                cp "$d"/run_summary.json  "artifacts/run_summary_${bn}_faults${n}.json" || true
               fi
             done
           done
