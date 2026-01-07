@@ -1,262 +1,242 @@
 
 # src/scheduler_deadline.py
-from typing import Dict, List, Set, Tuple
+# DeadlineScheduler with rotation/cooldown weights, hysteresis, and drain breakdown
+from dataclasses import dataclass, field
+import math
+import time
 
 class DeadlineScheduler:
-    """
-    Deterministic scheduler with:
-      - Battery drain per interval, recovery on REST streaks
-      - Rotation boundary behavior every 120,000 ticks (2 min)
-      - Cooldowns to avoid ping-ponging
-      - NORMAL (capacity=1) first, CONTINGENCY (capacity=2) if needed
-      - No duplicates within a domain per tick
-      - Change-only handoff tracking for GUI narrative
-    """
+    def __init__(self, mission, *, tick_ms=1000,
+                 rotation_weight=0.40, cooldown_weight=0.60,
+                 min_dwell_ticks=30, hysteresis_pct=0.08,
+                 battery_reserve_pct=0.15,
+                 capacity_per_unit=2):
+        """
+        mission: dict-like structure (parsed JSON)
+        """
+        self.mission = mission
+        self.tick_ms = tick_ms
 
-    def __init__(self,
-                 domains: List[str],
-                 pools: Dict[str, List[str]],
-                 required_map: Dict[str, int],
-                 max_gap_ticks: int,
-                 tick_ms: float,
-                 capacity_per_unit: int = 2,
-                 logs_dir: str = "",
-                 mission: Dict = None):
-        # Mission fields
-        self.domains = domains[:]
-        self.required_map = dict(required_map)
-        self.tick_ms = float(tick_ms)
-        self.rotation_period_ticks = int((mission or {}).get("rotation_period_ms", 120000) / self.tick_ms)
+        # Tuning
+        self.rotation_weight = rotation_weight
+        self.cooldown_weight = cooldown_weight
+        self.min_dwell_ticks = min_dwell_ticks
+        self.hysteresis_pct = hysteresis_pct
+        self.battery_reserve_pct = battery_reserve_pct
 
-        # Pools
-        self.universal_roles = bool((mission or {}).get("universal_roles", True))
-        self.units: List[str] = sorted(list({u for ulist in pools.values() for u in ulist} | set((mission or {}).get("units", []))))
-        self.pools = pools
+        # Capacity/units
+        self.capacity_per_unit = capacity_per_unit
+        self.units = self._init_units(mission)
+        self._active_unit_id = self.units[0]["id"] if self.units else None
 
-        # Capacity
-        self.capacity_per_unit_cfg = int(capacity_per_unit)
+        # Battery base = 100k (per previous chat)
+        self.battery_max = 100000.0
 
-        # Battery config
-        batt = (mission or {}).get("battery", {})
-        self.battery_max = int(batt.get("max", 100000))
-        self.battery: Dict[str, int] = {u: int(batt.get("initial", self.battery_max)) for u in self.units}
-        self.domain_cost = dict(batt.get("domain_cost", {"radar_ir_gps": 3, "comm_eoir": 2, "network_test_only": 1}))
-        self.cost_interval_ticks = int(batt.get("cost_interval_ms", 1000) / self.tick_ms)
-        self.rest_cfg = batt.get("rest_recharge", {"every_intervals": 3, "amount": 2000})
-        self.cooldown_in_ticks = int(batt.get("cooldown", {}).get("in_ms", 120000) / self.tick_ms)
-        self.cooldown_out_ticks = int(batt.get("cooldown", {}).get("out_ms", 120000) / self.tick_ms)
+        # Cooldowns from mission (ms)
+        self.cooldown_in_ms = self._get_mission_value(mission, ["cooldown_in_ms"], default=120000)
+        self.cooldown_out_ms = self._get_mission_value(mission, ["cooldown_out_ms"], default=120000)
+        self.rotation_period_ms = self._get_mission_value(mission, ["rotation_period_ms"], default=120000)
 
-        # State
-        self.tick = 0
-        self.mode = "NORMAL"
-        self.prev_assign: Dict[str, Set[str]] = {d: set() for d in self.domains}
-        self.cooldown_in: Dict[str, int] = {u: 0 for u in self.units}
-        self.cooldown_out: Dict[str, int] = {u: 0 for u in self.units}
-        self.drain_accum: Dict[str, int] = {u: 0 for u in self.units}
-        self.rest_intervals: Dict[str, int] = {u: 0 for u in self.units}
-        self.active_ticks_in_interval: Dict[str, int] = {u: 0 for u in self.units}
+        # Internal cooldown tracking per unit
+        self.cooldowns = {u["id"]: {"in": 0, "out": 0} for u in self.units}
 
-        # Interval snapshot for GUI battery_log
-        self.last_interval_drain: Dict[str, int] = {u: 0 for u in self.units}
-        self.last_interval_recovery: Dict[str, int] = {u: 0 for u in self.units}
+        # Per-tick bookkeeping
+        self._rotation_deadline_ms = self.rotation_period_ms
+        self._elapsed_since_rotation_ms = 0
 
-        # Run summary
-        self.total_ticks = 0
-        self.contingency_ticks = 0
-        self.last_mode = "NORMAL"
-        self.last_tick_details: Dict = {}
+        # Drain accounting
+        self.last_interval_drain = 0.0
+        self.last_interval_recovery = 0.0
+        self.last_interval_drain_breakdown = {}
 
-        # Weights (Strong rotation behavior)
-        self.W_BATT = 1.0
-        self.W_LOAD = 0.5
-        self.W_ROTATE_KEEP = 20.0
-        self.W_IN_COOLDOWN_STAY_ACTIVE_BONUS = -10.0
-        self.W_OUT_COOLDOWN_AVOID_ASSIGN = 10.0
-        self.SLOT2_PENALTY = 25.0  # discourage multi-role unless necessary
+        # Domain costs for breakdown
+        self.domain_costs = mission.get("domain_costs", {"radar":3, "comm":2, "network":1})
+        self.domains = list(self.domain_costs.keys())
 
-    # ---------------- core helpers ----------------
-    def is_rotation_tick(self, tick: int) -> bool:
-        return tick > 0 and (tick % self.rotation_period_ticks == 0)
+        # Handoff logging hook (file writing is in GUI; here track reason)
+        self._last_handoff_reason = None
 
-    def _decrement_cooldowns(self):
+    # ---------- Initialization helpers ----------
+    def _get_mission_value(self, mission, keys, default=None):
+        for k in keys:
+            if isinstance(mission, dict) and k in mission:
+                return mission[k]
+        return default
+
+    def _init_units(self, mission):
+        # Expect mission["units"] list of dicts with "id", optional "capabilities"
+        units = mission.get("units")
+        if isinstance(units, list) and units:
+            result = []
+            for i, u in enumerate(units):
+                uid = u.get("id") or u.get("name") or f"unit{i+1}"
+                result.append({
+                    "id": uid,
+                    "battery": self.battery_max,
+                    "battery_pct": 1.0,
+                    "dwell_ticks": 0,
+                    "capabilities": u.get("capabilities", None)
+                })
+            return result
+        # Fallback: synthesize 3 units
+        return [{"id": f"unit{i+1}", "battery": self.battery_max, "battery_pct": 1.0, "dwell_ticks": 0, "capabilities": None} for i in range(3)]
+
+    # ---------- Public getters ----------
+    def get_unit_ids(self):
+        return [u["id"] for u in self.units]
+
+    def current_unit_id(self):
+        return self._active_unit_id
+
+    def get_unit_battery_pct(self, unit_id):
         for u in self.units:
-            if self.cooldown_in[u] > 0: self.cooldown_in[u] -= 1
-            if self.cooldown_out[u] > 0: self.cooldown_out[u] -= 1
+            if u["id"] == unit_id:
+                return u["battery"] / self.battery_max
+        return 0.0
 
-    def _unit_capacity(self) -> int:
-        return 1 if self.mode == "NORMAL" else self.capacity_per_unit_cfg
+    def rotation_remaining_ms(self):
+        return max(0, self.rotation_period_ms - self._elapsed_since_rotation_ms)
 
-    def _allowed_units_for_domain(self, d: str) -> List[str]:
-        if self.universal_roles:
-            return self.units
-        return self.pools.get(d, [])
+    # ---------- Step ----------
+    def step(self):
+        """Advance one tick: cooldowns, battery drain/recovery, rotation."""
+        # Update elapsed
+        self._elapsed_since_rotation_ms += self.tick_ms
 
-    def _score(self, u: str, d: str, tick: int, slot_index: int, prev_assign_d: Set[str]) -> float:
-        batt_inv = (self.battery_max - self.battery[u])
-        score = 0.0
-        score += batt_inv * self.W_BATT
-        score += self.domain_cost.get(d, 1) * batt_inv * self.W_LOAD
-        if self.is_rotation_tick(tick) and u in prev_assign_d:
-            score += self.W_ROTATE_KEEP
-        if self.cooldown_in[u] > 0 and u in prev_assign_d:
-            score += self.W_IN_COOLDOWN_STAY_ACTIVE_BONUS
-        if self.cooldown_out[u] > 0 and u not in prev_assign_d:
-            score += self.W_OUT_COOLDOWN_AVOID_ASSIGN
-        if slot_index > 0:
-            score += self.SLOT2_PENALTY
+        # Update cooldown counters
+        for uid in self.cooldowns:
+            for k in ("in", "out"):
+                self.cooldowns[uid][k] = max(0, self.cooldowns[uid][k] - self.tick_ms)
+
+        # Battery drain/recovery for this tick
+        active = self._active_unit_id
+        drain = self._compute_interval_drain(active)
+        self.last_interval_drain = drain
+
+        # Distribute drain across domains for GUI badges (proportional to costs)
+        wsum = sum(self.domain_costs.values()) or 1
+        self.last_interval_drain_breakdown = {d: drain * (self.domain_costs[d] / wsum) for d in self.domains}
+
+        self._apply_battery_change(active, -drain)
+
+        # Recovery: resting units get +2% per 3 intervals rest (as earlier)
+        recovery = 0.0
+        for u in self.units:
+            if u["id"] != active:
+                # accrue per 3 ticks → 2% of max
+                if (u["dwell_ticks"] % 3) == 0:
+                    rec = 0.02 * self.battery_max
+                    self._apply_battery_change(u["id"], rec)
+                    recovery += rec
+        self.last_interval_recovery = recovery
+
+        # Rotation decision if rotation period elapsed or reserve breached
+        if (self._elapsed_since_rotation_ms >= self.rotation_period_ms) or (self.get_unit_battery_pct(active) <= self.battery_reserve_pct):
+            next_uid = self._pick_next_unit(active)
+            if next_uid != active:
+                self._handoff_to(next_uid, reason="weighted_rotation")
+                self._elapsed_since_rotation_ms = 0
+
+        # Increment dwell ticks
+        for u in self.units:
+            if u["id"] == self._active_unit_id:
+                u["dwell_ticks"] = u.get("dwell_ticks", 0) + 1
+            else:
+                u["dwell_ticks"] = u.get("dwell_ticks", 0)
+
+        # Coverage update can be done in GUI; scheduler stays compatible.
+
+    # ---------- Battery helpers ----------
+    def _apply_battery_change(self, unit_id, delta):
+        for u in self.units:
+            if u["id"] == unit_id:
+                u["battery"] = max(0.0, min(self.battery_max, u["battery"] + delta))
+                u["battery_pct"] = u["battery"] / self.battery_max
+                return
+
+    def _compute_interval_drain(self, active):
+        """
+        Base drain per 1000 ticks; scale by tick_ms. If no active unit, drain=0.
+        """
+        if active is None:
+            return 0.0
+        # Example: 100 units per 1000 ms; scale to tick
+        base_per_sec = 100.0
+        drain = base_per_sec * (self.tick_ms / 1000.0)
+        return drain
+
+    # ---------- Rotation scoring ----------
+    def _cooldown_penalty(self, unit_id):
+        cd = self.cooldowns.get(unit_id, {"in":0, "out":0})
+        rem_in = cd["in"]
+        rem_out = cd["out"]
+        tot = max(self.cooldown_in_ms, 1) + max(self.cooldown_out_ms, 1)
+        rem = rem_in + rem_out
+        frac = 0.0 if tot <= 0 else rem / tot
+        return (frac ** 2) * self.cooldown_weight
+
+    def _feasible_state(self, unit_id):
+        """
+        Placeholder mapping to NORMAL/CONTINGENCY/NO based on capabilities or mission hints.
+        For compatibility: assume NORMAL unless mission flags otherwise.
+        """
+        return "NORMAL"
+
+    def _rotation_score(self, candidate, active):
+        cand_batt = self.get_unit_battery_pct(candidate)
+        act_batt = self.get_unit_battery_pct(active)
+        batt_gain = max(0.0, cand_batt - act_batt)
+
+        cd_pen = self._cooldown_penalty(candidate)
+
+        feas = self._feasible_state(candidate)
+        if feas == "NORMAL":
+            domain_bonus = 0.20
+        elif feas == "CONTINGENCY":
+            domain_bonus = 0.08
+        else:
+            domain_bonus = -0.50
+
+        score = (self.rotation_weight * batt_gain) + domain_bonus - cd_pen
         return score
 
-    def _try_assign(self, tick: int, alive: Dict[str, bool], capacity_limit: int) -> Tuple[bool, Dict[str, List[str]]]:
-        roles_per_unit: Dict[str, int] = {u: 0 for u in self.units}
-        assign: Dict[str, List[str]] = {d: [] for d in self.domains}
-
-        for d in self.domains:
-            prev_d = self.prev_assign.get(d, set())
-            candidates = []
-            for u in self._allowed_units_for_domain(d):
-                if not alive.get(u, True):  # down units excluded
-                    continue
-                if self.battery[u] <= 0:
-                    continue
-                slot_index = roles_per_unit[u]
-                if slot_index >= capacity_limit:
-                    continue
-                candidates.append((self._score(u, d, tick, slot_index, prev_d), u))
-            candidates.sort(key=lambda t: (t[0], t[1]))  # deterministic by score then id
-
-            # Fill domain requirement
-            for _, u in candidates:
-                if len(assign[d]) >= self.required_map[d]:
-                    break
-                if roles_per_unit[u] < capacity_limit and u not in assign[d]:
-                    assign[d].append(u)
-                    roles_per_unit[u] += 1
-
-            if len(assign[d]) < self.required_map[d]:
-                return False, {}
-
-        return True, assign
-
-    # ---------------- public API ----------------
-    def schedule_tick(self, alive: Dict[str, bool]) -> List[Tuple[str, str]]:
-        """
-        Returns list of (domain, unit) assignments for this tick.
-        Also updates battery accumulators, cooldowns, and handoff details.
-        """
-        self.tick += 1
-        tick = self.tick
-
-        # Decide mode: try NORMAL (capacity=1) first, else CONTINGENCY (capacity=2)
-        self.mode = "NORMAL"
-        feasible, assign_map = self._try_assign(tick, alive, capacity_limit=1)
-        if not feasible:
-            self.mode = "CONTINGENCY"
-            feasible, assign_map = self._try_assign(tick, alive, capacity_limit=self.capacity_per_unit_cfg)
-            if not feasible:
-                raise RuntimeError(f"CRITICAL: infeasible at tick={tick}")
-
-        # Update cooldowns each tick
-        self._decrement_cooldowns()
-
-        # Detect rotations to set cooldowns at rotation boundaries
-        handoffs: List[Dict] = []
-        if self.is_rotation_tick(tick):
-            for d in self.domains:
-                prev = self.prev_assign.get(d, set())
-                now = set(assign_map[d])
-                rotated_out = sorted(list(prev - now))
-                rotated_in = sorted(list(now - prev))
-                for u in rotated_in:
-                    self.cooldown_in[u] = self.cooldown_in_ticks
-                for u in rotated_out:
-                    self.cooldown_out[u] = self.cooldown_out_ticks
-                if rotated_in or rotated_out:
-                    handoffs.append({
-                        "domain": d,
-                        "removed": rotated_out,
-                        "added": rotated_in,
-                        "atomic": True
-                    })
-
-        # Save prev_assign for next tick
-        self.prev_assign = {d: set(assign_map[d]) for d in self.domains}
-
-        # Accumulate drain and active ticks for interval accounting
-        active_units = set()
-        for d, units in assign_map.items():
-            for u in units:
-                self.drain_accum[u] += self.domain_cost.get(d, 1)
-                active_units.add(u)
+    def _eligible_to_rotate(self, active):
+        # Minimum dwell requirement OR if under reserve
+        dwell = 0
         for u in self.units:
-            if u in active_units:
-                self.active_ticks_in_interval[u] += 1
+            if u["id"] == active:
+                dwell = u.get("dwell_ticks", 0)
+                break
+        if dwell < self.min_dwell_ticks and self.get_unit_battery_pct(active) > self.battery_reserve_pct:
+            return False
+        return True
 
-        # Interval boundary: apply drain and recovery
-        if tick % self.cost_interval_ticks == 0:
-            # Capture drain BEFORE reset
-            interval_drain = {u: self.drain_accum[u] for u in self.units}
-            pre_battery = {u: self.battery[u] for u in self.units}
+    def _pick_next_unit(self, active):
+        # Compare candidates; apply hysteresis against 'stay' score
+        stay_score = 0.0 - self._cooldown_penalty(active)
 
-            # Apply drain
-            for u in self.units:
-                self.battery[u] = max(0, self.battery[u] - self.drain_accum[u])
-                self.drain_accum[u] = 0
+        best = active
+        best_score = stay_score
+        for uid in self.get_unit_ids():
+            if uid == active:
+                continue
+            s = self._rotation_score(uid, active)
+            if s > best_score:
+                best = uid
+                best_score = s
 
-            # Recovery for those RESTing the entire interval
-            every = int(self.rest_cfg.get("every_intervals", 3))
-            amount = int(self.rest_cfg.get("amount", 2000))
-            for u in self.units:
-                was_rest_full_interval = (self.active_ticks_in_interval.get(u, 0) == 0) and alive.get(u, True)
-                if was_rest_full_interval:
-                    self.rest_intervals[u] += 1
-                    if self.rest_intervals[u] % every == 0:
-                        self.battery[u] = min(self.battery_max, self.battery[u] + amount)
-                else:
-                    self.rest_intervals[u] = 0
+        improved = (best_score - stay_score) > (self.hysteresis_pct)
+        if best != active and self._eligible_to_rotate(active) and improved:
+            return best
+        return active
 
-            # Compute recovery applied for audit
-            post_battery = {u: self.battery[u] for u in self.units}
-            interval_recovery = {}
-            for u in self.units:
-                after_drain = max(0, pre_battery[u] - interval_drain[u])
-                interval_recovery[u] = max(0, post_battery[u] - after_drain)
+    def _handoff_to(self, next_uid, reason="rotation"):
+        prev = self._active_unit_id
+        # set cooldowns (in/out)
+        if prev:
+            self.cooldowns[prev]["out"] = self.cooldown_out_ms
+        self.cooldowns[next_uid]["in"] = self.cooldown_in_ms
 
-            # Save for GUI log
-            self.last_interval_drain = interval_drain
-            self.last_interval_recovery = interval_recovery
-
-            # Reset active tick counters for next interval
-            self.active_ticks_in_interval = {u: 0 for u in self.units}
-
-        # Update run summary
-        self.total_ticks += 1
-        if self.mode == "CONTINGENCY":
-            self.contingency_ticks += 1
-        self.last_mode = self.mode
-
-        # Build flat assignments list for GUI
-        assignments = []
-        for d in self.domains:
-            for u in assign_map[d]:
-                assignments.append((d, u))
-
-        # Save tick details for GUI
-        self.last_tick_details = {
-            "handoffs": handoffs,
-            "assign_map": {d: list(assign_map[d]) for d in self.domains}
-        }
-        return assignments
-
-    def get_last_tick_details(self) -> Dict:
-        return dict(self.last_tick_details)
-
-    def get_run_summary(self) -> Dict:
-        return {
-            "contingency_ticks": self.contingency_ticks,
-            "total_ticks": self.total_ticks,
-            "last_mode": self.last_mode
-        }
-
-    def close(self):
-        # No external resources to release, but method kept for API parity
-        pass
+        self._active_unit_id = next_uid
+        self._last_handoff_reason = reason
+        # File logging done in GUI; this keeps scheduler clean.

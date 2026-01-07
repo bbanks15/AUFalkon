@@ -1,0 +1,24 @@
+
+# configs/gui_sim.yaml
+
+# Mission & runtime
+mission: "missions/mission_fleet12_deadline_ms1.json"
+logs_dir: "gui_logs"
+capacity_per_unit: 2
+tick_ms: 1000
+
+# Rotation/cooldown tuning — strong but not churny
+rotation_weight: 0.40         # prefer battery headroom, but not overly sensitive
+cooldown_weight: 0.60         # quadratic penalty discourages flip-flopping
+min_dwell_ticks: 30           # minimum time on-station before eligible to rotate
+hysteresis_pct: 0.08          # require 8% score improvement to rotate
+battery_reserve_pct: 0.15     # rotate when active battery falls below 15%
+
+# Coverage gap handling
+fail_on_gap: true             # start a grace period counter if gap occurs
+gap_recovery_ticks: 100       # if still gapped after 100 ticks → critical fail (exit code 2)
+
+# GUI options
+show_domain_drain_badges: true    # per-domain badge using last_interval_drain_breakdown
+show_gap_banner: true             # non-blocking banner when gap starts
+``
