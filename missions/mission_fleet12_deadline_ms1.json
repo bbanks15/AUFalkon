@@ -3,7 +3,6 @@
   "name": "mission_fleet12_deadline_ms1",
   "tick_ms": 1,
   "rotation_period_ms": 120000,
-  "domains": ["radar_ir_gps", "comm_eoir", "network_test_only"],
   "required_active": {
     "radar_ir_gps": 4,
     "comm_eoir": 4,
@@ -17,5 +16,7 @@
     "domain_cost": { "radar_ir_gps": 3, "comm_eoir": 2, "network_test_only": 1 },
     "cooldown": { "in_ms": 120000, "out_ms": 120000 }
   },
-  "units": ["A","B","C","D","E","F","G","H","I","J","K","L"]
+  "units": [
+    "A","B","C","D","E","F","G","H","I","J","K","L"
+  ]
 }

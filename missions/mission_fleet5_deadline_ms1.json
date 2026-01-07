@@ -3,7 +3,6 @@
   "name": "mission_fleet5_deadline_ms1",
   "tick_ms": 1,
   "rotation_period_ms": 120000,
-  "domains": ["radar_ir_gps", "comm_eoir", "network_test_only"],
   "required_active": {
     "radar_ir_gps": 2,
     "comm_eoir": 2,
@@ -19,3 +18,4 @@
   },
   "units": ["A","B","C","D","E"]
 }
+``
