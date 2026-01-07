@@ -1,8 +1,13 @@
 
 # src/mission_runner.py
-from typing import Dict, List
+import csv
 import os
+from datetime import datetime, timedelta
+from typing import Dict, List, Set
 
+from src.scheduler_deadline import SchedulerState
+
+# Attempt Plotly (interactive HTML); fallback to matplotlib PNG
 PLOTLY_AVAILABLE = False
 try:
     import plotly.graph_objects as go
@@ -11,6 +16,147 @@ try:
     PLOTLY_AVAILABLE = True
 except Exception:
     import matplotlib.pyplot as plt
+
+def run_mission(mission: Dict, sim_ticks: int, wall_start: datetime,
+                logs_dir: str = "logs",
+                write_html_coverage: bool = True):
+    os.makedirs(logs_dir, exist_ok=True)
+    event_stream_path = os.path.join(logs_dir, "event_stream.log")
+    handoff_log_path = os.path.join(logs_dir, "handoff_log.csv")
+    battery_log_path = os.path.join(logs_dir, "battery_log.csv")
+    coverage_html_path = os.path.join(logs_dir, "coverage_report.html")
+    coverage_png_path = os.path.join(logs_dir, "coverage_report.png")
+
+    # Init scheduler
+    S = SchedulerState(mission)
+    rotation_period_ticks = mission["rotation_period_ms"] // mission["tick_ms"]
+    rest_cfg = mission["battery"]["rest_recharge"]
+
+    # Prepare logs
+    with open(event_stream_path, "w", encoding="utf-8") as evt, \
+         open(handoff_log_path, "w", newline="", encoding="utf-8") as hof, \
+         open(battery_log_path, "w", newline="", encoding="utf-8") as bat:
+
+        handoff_writer = csv.writer(hof)
+        handoff_writer.writerow(["tick", "sim_ms", "wall", "domain", "added_units", "removed_units", "mode"])
+
+        battery_writer = csv.writer(bat)
+        battery_writer.writerow(["tick", "sim_ms", "wall", "unit", "battery", "drain_applied", "recovery_applied", "rest_interval", "mode"])
+
+        coverage_records: List[Dict] = []
+        active_ticks_map: Dict[str, int] = {u: 0 for u in mission["units"]}
+
+        prev_assign: Dict[str, Set[str]] = {d: set() for d in S.domains}
+
+        for tick in range(1, sim_ticks + 1):
+            sim_ms = tick * mission["tick_ms"]
+            wall_time = wall_start + timedelta(milliseconds=sim_ms)
+
+            # Scheduling step
+            assign = S.step(tick)
+
+            # Rotation narrative
+            if S.is_rotation_tick(tick):
+                evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Rotation boundary reached (2-min)\n")
+
+            # Handoff change-only log + narrative
+            for d in S.domains:
+                prev = prev_assign.get(d, set())
+                now = set(assign[d])
+                added = sorted(list(now - prev))
+                removed = sorted(list(prev - now))
+                if added or removed:
+                    handoff_writer.writerow([
+                        tick, sim_ms, wall_time.isoformat(timespec="milliseconds"), d,
+                        ";".join(added), ";".join(removed), S.mode
+                    ])
+                    for u in removed:
+                        evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Device {u} rotated OUT of {d} to REST (battery={S.battery[u]})\n")
+                    for u in added:
+                        evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Device {u} rotated IN to {d} (battery={S.battery[u]})\n")
+
+            # Drain accumulation per tick
+            active_units = S.accumulate_drain(assign)
+            for u in mission["units"]:
+                if u in active_units:
+                    active_ticks_map[u] += 1
+
+            # Coverage record (per domain)
+            for d in S.domains:
+                coverage_records.append({
+                    "tick": tick,
+                    "domain": d,
+                    "assigned": len(assign[d]),
+                    "required": S.required_active[d],
+                    "gap": int(len(assign[d]) < S.required_active[d]),
+                    "rotation_boundary": int(S.is_rotation_tick(tick))
+                })
+
+            # Interval boundary
+            if tick % S.cost_interval_ticks == 0:
+                # Capture drain BEFORE reset
+                interval_drain = {u: S.drain_accum[u] for u in mission["units"]}
+                pre_battery     = {u: S.battery[u]     for u in mission["units"]}
+
+                # Apply drain + recovery
+                S.update_battery_interval(active_ticks_map, rest_cfg)
+
+                # Compute recovery applied = post - (pre - drain)
+                post_battery    = {u: S.battery[u]     for u in mission["units"]}
+                interval_recovery = {}
+                for u in mission["units"]:
+                    after_drain = max(0, pre_battery[u] - interval_drain[u])
+                    interval_recovery[u] = max(0, post_battery[u] - after_drain)
+
+                # Write battery snapshot (post-update)
+                for u in mission["units"]:
+                    battery_writer.writerow([
+                        tick,
+                        sim_ms,
+                        wall_time.isoformat(timespec="milliseconds"),
+                        u,
+                        post_battery[u],
+                        interval_drain[u],
+                        interval_recovery[u],
+                        S.rest_intervals[u],
+                        S.mode
+                    ])
+
+                # Reset active tick counters for next interval
+                active_ticks_map = {u: 0 for u in mission["units"]}
+
+                evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Battery interval applied; recovery evaluated for REST\n")
+
+            # Remember previous assignment
+            prev_assign = {d: set(assign[d]) for d in S.domains}
+
+        # After run: coverage report
+        if write_html_coverage:
+            generate_coverage_report(coverage_records, S.domains, rotation_period_ticks,
+                                     coverage_html_path, coverage_png_path)
+
+        # Write machine-readable coverage summary for CI validation
+        gaps_by_domain = {}
+        total_gaps = 0
+        for d in S.domains:
+            d_gaps = sum(1 for rec in coverage_records if rec["domain"] == d and rec["gap"] == 1)
+            gaps_by_domain[d] = d_gaps
+            total_gaps += d_gaps
+
+        import json
+        with open(os.path.join(logs_dir, "coverage_summary.json"), "w", encoding="utf-8") as jf:
+            json.dump({
+                "total_gap_ticks": total_gaps,
+                "gaps_by_domain": gaps_by_domain
+            }, jf, indent=2)
+
+    return {
+        "event_stream.log": event_stream_path,
+        "handoff_log.csv": handoff_log_path,
+        "battery_log.csv": battery_log_path,
+        "coverage_report.html": coverage_html_path,
+        "coverage_summary.json": os.path.join(logs_dir, "coverage_summary.json"),
+    }
 
 def generate_coverage_report(coverage_records: List[Dict], domains: List[str],
                              rotation_period_ticks: int,
