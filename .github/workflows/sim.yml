@@ -1,0 +1,49 @@
+
+name: Simulation & Artifacts
+
+on:
+  push:
+    branches: [ "main" ]
+  workflow_dispatch: {}
+
+jobs:
+  run-sim:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # If you have a requirements.txt, include plotly there; else install directly
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            pip install pandas matplotlib plotly
+          fi
+
+      - name: Run mission simulation
+        run: |
+          python -c "from src.missions import load_default_mission; \
+                     from src.mission_runner import run_mission; \
+                     from datetime import datetime; \
+                     mission = load_default_mission(); \
+                     run_mission(mission, sim_ticks=240000, wall_start=datetime.utcnow())"
+
+      - name: Upload artifacts (logs + coverage)
+        uses: actions/upload-artifact@v4
+        with:
+          name: control-layer-logs-and-summary
+          path: |
+            logs/event_stream.log
+            logs/handoff_log.csv
+            logs/battery_log.csv
+            logs/coverage_report.html
+            logs/coverage_report.png
+          if-no-files-found: warn

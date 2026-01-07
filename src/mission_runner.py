@@ -1,325 +1,224 @@
 
-import json, argparse, os, csv
+# src/mission_runner.py
+import csv
+import os
 from datetime import datetime, timedelta
-from scheduler_deadline import DeadlineScheduler
+from typing import Dict, List, Set
 
+from src.scheduler_deadline import SchedulerState
 
-class FailureTimeline:
-    def __init__(self, units, initial_faults=0):
-        self.units = units[:]
-        self.alive = {u: True for u in units}
-        self.recover_at = {u: None for u in units}
-        self.permanent = {u: False for u in units}
+# Attempt to use Plotly; fallback to static PNG with matplotlib if unavailable
+PLOTLY_AVAILABLE = False
+try:
+    import plotly.graph_objects as go
+    from plotly.subplots import make_subplots
+    from plotly.offline import plot as plotly_offline_plot
+    PLOTLY_AVAILABLE = True
+except Exception:
+    import matplotlib.pyplot as plt
 
-        # Deterministic initial permanent faults: first N units
-        n = max(0, min(int(initial_faults), len(units)))
-        for u in units[:n]:
-            self.alive[u] = False
-            self.permanent[u] = True
-            self.recover_at[u] = None
+def run_mission(mission: Dict, sim_ticks: int, wall_start: datetime,
+                logs_dir: str = "logs",
+                write_html_coverage: bool = True):
+    os.makedirs(logs_dir, exist_ok=True)
+    event_stream_path = os.path.join(logs_dir, "event_stream.log")
+    handoff_log_path = os.path.join(logs_dir, "handoff_log.csv")
+    battery_log_path = os.path.join(logs_dir, "battery_log.csv")
+    coverage_html_path = os.path.join(logs_dir, "coverage_report.html")
+    coverage_png_path = os.path.join(logs_dir, "coverage_report.png")
 
-    def apply_events(self, events, tick_ms, current_tick):
-        """
-        Returns a list of fault events applied this tick:
-          dict(type=DOWN/UP, unit=..., permanent=bool, reason=..., at_ms=...)
-        """
-        now_ms = int(current_tick * tick_ms)
-        emitted = []
+    # Init scheduler
+    S = SchedulerState(mission)
+    rotation_period_ticks = mission["rotation_period_ms"] // mission["tick_ms"]
+    rest_cfg = mission["battery"]["rest_recharge"]
 
-        # Apply events that start now
-        for ev in events:
-            start = int(ev.get("at_ms", 0))
-            dur = int(ev.get("duration_ms", 0))
-            unit = ev.get("unit")
-            typ = ev.get("type")
-            permanent = bool(ev.get("permanent", False))
-            if unit is None:
-                continue
+    # Prepare logs
+    with open(event_stream_path, "w", encoding="utf-8") as evt, \
+         open(handoff_log_path, "w", newline="", encoding="utf-8") as hof, \
+         open(battery_log_path, "w", newline="", encoding="utf-8") as bat:
 
-            if start == now_ms:
-                if typ in ("unit_crash", "effector_failure", "auth_fail"):
-                    self.alive[unit] = False
-                    if permanent:
-                        self.permanent[unit] = True
-                        self.recover_at[unit] = None
-                    else:
-                        self.recover_at[unit] = start + dur if dur > 0 else None
+        # handoff_log header: change-only events per tick
+        handoff_writer = csv.writer(hof)
+        handoff_writer.writerow(["tick", "sim_ms", "wall", "domain", "added_units", "removed_units", "mode"])
 
-                    emitted.append({
-                        "type": "DOWN",
-                        "unit": unit,
-                        "permanent": permanent,
-                        "reason": typ,
-                        "at_ms": now_ms
-                    })
+        # battery_log header: interval snapshots
+        battery_writer = csv.writer(bat)
+        battery_writer.writerow(["tick", "sim_ms", "wall", "unit", "battery", "drain_interval", "rest_interval", "mode"])
 
-        # Handle recoveries for temporary failures
-        for u in list(self.alive.keys()):
-            ra = self.recover_at.get(u)
-            if ra is not None and now_ms >= ra and not self.permanent.get(u, False):
-                self.alive[u] = True
-                self.recover_at[u] = None
-                emitted.append({
-                    "type": "UP",
-                    "unit": u,
-                    "permanent": False,
-                    "reason": "recovery",
-                    "at_ms": now_ms
+        # Coverage tracking per tick
+        coverage_records: List[Dict] = []
+
+        # Track active ticks per unit within the current cost interval
+        active_ticks_map: Dict[str, int] = {u: 0 for u in mission["units"]}
+
+        prev_assign: Dict[str, Set[str]] = {d: set() for d in S.domains}
+
+        for tick in range(1, sim_ticks + 1):
+            sim_ms = tick * mission["tick_ms"]
+            wall_time = wall_start + timedelta(milliseconds=sim_ms)
+
+            # Scheduling step
+            assign = S.step(tick)
+
+            # Event stream: rotation boundary
+            if S.is_rotation_tick(tick):
+                evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Rotation boundary reached (2-min)\n")
+
+            # Handoff change-only log
+            for d in S.domains:
+                prev = prev_assign.get(d, set())
+                now = set(assign[d])
+                added = sorted(list(now - prev))
+                removed = sorted(list(prev - now))
+                if added or removed:
+                    handoff_writer.writerow([
+                        tick, sim_ms, wall_time.isoformat(timespec="milliseconds"), d,
+                        ";".join(added), ";".join(removed), S.mode
+                    ])
+                    # Narrative lines for event_stream
+                    for u in removed:
+                        evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Device {u} rotated OUT of {d} to REST (battery={S.battery[u]})\n")
+                    for u in added:
+                        evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Device {u} rotated IN to {d} (battery={S.battery[u]})\n")
+
+            # Apply drain accumulation per tick and track active ticks for interval
+            active_units = S.accumulate_drain(assign)
+            for u in mission["units"]:
+                if u in active_units:
+                    active_ticks_map[u] += 1
+
+            # Coverage record (per domain)
+            for d in S.domains:
+                coverage_records.append({
+                    "tick": tick,
+                    "domain": d,
+                    "assigned": len(assign[d]),
+                    "required": S.required_active[d],
+                    "gap": int(len(assign[d]) < S.required_active[d]),
+                    "rotation_boundary": int(S.is_rotation_tick(tick))
                 })
 
-        return emitted
-
-    def status(self):
-        return dict(self.alive)
-
-
-def _required_map(mission, domains):
-    cfg = mission.get("required_active_per_domain", 1)
-    if isinstance(cfg, dict):
-        rm = {d: int(cfg.get(d, 1)) for d in domains}
-    else:
-        rm = {d: int(cfg) for d in domains}
-    for d, v in rm.items():
-        if v <= 0:
-            raise ValueError(f"required_active_per_domain for '{d}' must be > 0, got {v}")
-    return rm
-
-
-from datetime import datetime, timedelta
-
-class EventStream:
-    """
-    Human-readable, change-only event stream.
-
-    Uses SIMULATED wall time:
-      Start epoch = 01-01-26 00:00:00.000
-      wall_time(tick) = epoch + (tick * tick_ms)
-
-    Writes lines like:
-      [tick=120 sim_ms=120 wall=01-01-26 00:00:00.120] Device D entered FAULTED state
-    """
-    def __init__(self, path: str, tick_ms: float, include_wall_time: bool = True):
-        self.path = path
-        self.tick_ms = float(tick_ms)
-        self.include_wall_time = include_wall_time
-
-        # Fixed simulation epoch (naive datetime, deterministic)
-        self.epoch = datetime(2026, 1, 1, 0, 0, 0, 0)
-
-        self.f = open(path, "w", encoding="utf-8")
-        self.f.write("# event_stream.log (change-only)\n")
-        self.f.write("# format: [tick=... sim_ms=... wall=MM-DD-YY HH:MM:SS.mmm] message\n")
-        self.f.write("# wall time is SIMULATED: epoch(01-01-26 00:00:00.000) + sim_ms\n")
-
-        self.prev_alive = None  # type: ignore
-        self.prev_roles = {}    # unit -> set(domains)
-        self.prev_rest = set()
-
-    def close(self):
-        try:
-            self.f.close()
-        except Exception:
-            pass
-
-    def _fmt_wall(self, sim_ms: int) -> str:
-        dt = self.epoch + timedelta(milliseconds=sim_ms)
-        # Ensure millisecond precision (mmm)
-        ms = dt.microsecond // 1000
-        return f"{dt.strftime('%m-%d-%y %H:%M:%S')}.{ms:03d}"
-
-    def _stamp(self, tick: int) -> str:
-        sim_ms = int(round(tick * self.tick_ms))
-        if not self.include_wall_time:
-            return f"[tick={tick} sim_ms={sim_ms}]"
-        return f"[tick={tick} sim_ms={sim_ms} wall={self._fmt_wall(sim_ms)}]"
-
-    def emit(self, tick: int, msg: str):
-        self.f.write(f"{self._stamp(tick)} {msg}\n")
-        self.f.flush()
-
-    def update(self, tick: int, alive: dict, assignments: list, domains: list):
-        """
-        Compare state to previous tick and emit change-only narrative events.
-        """
-        # Build roles map from assignments
-        roles = {u: set() for u in alive.keys()}
-        for d, u in assignments:
-            roles.setdefault(u, set()).add(d)
-
-        alive_units = {u for u, ok in alive.items() if ok}
-        assigned_units = {u for _d, u in assignments}
-        rest_units = alive_units - assigned_units
-
-        # 1) Alive transitions (DOWN/UP)
-        if self.prev_alive is not None:
-            for u in alive.keys():
-                was = bool(self.prev_alive.get(u, False))
-                now = bool(alive.get(u, False))
-                if was and not now:
-                    self.emit(tick, f"Device {u} entered FAULTED state")
-                if (not was) and now:
-                    # Prefer combined message if it recovered into REST
-                    if u in rest_units:
-                        self.emit(tick, f"Device {u} recovered and entered REST state")
-                    else:
-                        entered = sorted(list(roles.get(u, set())))
-                        if entered:
-                            self.emit(tick, f"Device {u} recovered and entered {entered[0]}")
-                        else:
-                            self.emit(tick, f"Device {u} recovered")
-
-        # 2) Role transitions per device (entered/exited domain)
-        for u in alive.keys():
-            prev = self.prev_roles.get(u, set())
-            curr = roles.get(u, set())
-            entered = sorted(list(curr - prev))
-            exited = sorted(list(prev - curr))
-
-            for d in entered:
-                self.emit(tick, f"Device {u} entered {d}")
-            for d in exited:
-                self.emit(tick, f"Device {u} exited {d}")
-
-        # 3) REST transitions
-        prev_rest = self.prev_rest
-        entered_rest = sorted(list(rest_units - prev_rest))
-        exited_rest = sorted(list(prev_rest - rest_units))
-
-        for u in entered_rest:
-            self.emit(tick, f"Device {u} entered REST state")
-        for u in exited_rest:
-            self.emit(tick, f"Device {u} exited REST state")
-
-        # Save for next tick
-        self.prev_alive = dict(alive)
-        self.prev_roles = {u: set(roles.get(u, set())) for u in alive.keys()}
-        self.prev_rest = set(rest_units)
-
-
-def run_mission(mission_path: str, ticks: int, logs_dir: str, initial_faults: int = 0, capacity_per_unit: int = 2):
-    with open(mission_path, "r", encoding="utf-8") as f:
-        mission = json.load(f)
-
-    tick_ms = float(mission.get("tick_ms", 1.0))
-    max_gap_ms = int(mission["constraints"]["max_gap_ms"])
-    max_gap_ticks = max(1, int(max_gap_ms / tick_ms))
-
-    domains = mission["domains"]
-    required_map = _required_map(mission, domains)
-
-    # universal roles => all units eligible for all domains
-    universal = bool(mission.get("universal_roles", False))
-    if universal:
-        pools = {d: mission["units"][:] for d in domains}
-        pools["spares"] = []
-    else:
-        pools = {d: mission["domain_pools"].get(d, []) for d in domains}
-        pools["spares"] = mission["domain_pools"].get("spares", [])
-
-    os.makedirs(logs_dir, exist_ok=True)
-
-    # Fault event log (device down/up over time)
-    fault_log_path = os.path.join(logs_dir, "fault_events.csv")
-    fault_f = open(fault_log_path, "w", newline="", encoding="utf-8")
-    fault_w = csv.writer(fault_f)
-    fault_w.writerow(["tick", "sim_ms", "event", "unit", "permanent", "reason"])
-
-    # Human narrative event stream
-    evs = EventStream(os.path.join(logs_dir, "event_stream.log"), tick_ms=tick_ms, include_wall_time=True)
-
-    # Log initial sweep faults at tick=0
-    units = mission["units"]
-    n = max(0, min(int(initial_faults), len(units)))
-    for u in units[:n]:
-        fault_w.writerow([0, 0, "DOWN", u, "YES", "initial_faults"])
-    fault_f.flush()
-
-    sched = DeadlineScheduler(
-        domains, pools, required_map, max_gap_ticks, tick_ms,
-        capacity_per_unit=capacity_per_unit,
-        logs_dir=logs_dir
-    )
-
-    ft = FailureTimeline(mission["units"], initial_faults=initial_faults)
-    events = mission.get("failure_injections", [])
-
-    status = "PASS"
-    error = ""
-    run_summary = {}
-
-    # Seed event stream baseline at tick=0 (so first real tick can show transitions)
-    try:
-        evs.prev_alive = ft.status()
-        evs.prev_roles = {u: set() for u in ft.status().keys()}
-        evs.prev_rest = set(u for u, ok in ft.status().items() if ok)
-    except Exception:
-        pass
-
-    try:
-        for _ in range(1, ticks + 1):
-            # apply time-based events at current sched.tick (before scheduling)
-            emitted = ft.apply_events(events, tick_ms, sched.tick)
-            if emitted:
-                for ev in emitted:
-                    fault_w.writerow([
-                        sched.tick,
-                        int(sched.tick * tick_ms),
-                        ev["type"],
-                        ev["unit"],
-                        "YES" if ev.get("permanent", False) else "NO",
-                        ev.get("reason", "")
+            # Battery interval update
+            if tick % S.cost_interval_ticks == 0:
+                # write battery_log snapshot for the interval (all units)
+                for u in mission["units"]:
+                    battery_writer.writerow([
+                        tick, sim_ms, wall_time.isoformat(timespec="milliseconds"), u,
+                        S.battery[u],  # after applying drain below we will update, so write pre-update accum? We'll include drain from accum map
+                        # For audit clarity, we store total drain for the interval via last accum before reset:
+                        # (We already incremented drain per tick; at interval end, it's applied and reset)
+                        # To show the exact drain that was applied, compute from active_ticks_map * domain_cost at unit-level is complex.
+                        # We'll log current drain_accum (applied below) before reset.
+                        # capture planned drain:
+                        S.drain_accum[u],
+                        S.rest_intervals[u],
+                        S.mode
                     ])
-                fault_f.flush()
 
-            alive = ft.status()
-            assignments = sched.schedule_tick(alive)
+                # Apply drain + recovery at interval boundary
+                S.update_battery_interval(active_ticks_map, rest_cfg)
 
-            # Update narrative stream after scheduling decisions (captures "who filled in")
-            evs.update(sched.tick, alive, assignments, domains)
+                # Reset active tick counters for next interval
+                active_ticks_map = {u: 0 for u in mission["units"]}
 
-        if hasattr(sched, "get_run_summary"):
-            run_summary = sched.get_run_summary()
+                # Narrative battery lines
+                evt.write(f"[tick={tick} sim_ms={sim_ms} wall={wall_time.strftime('%m-%d-%y %H:%M:%S.%f')[:-3]}] Battery interval applied; recovery evaluated for REST\n")
 
-    except Exception as e:
-        status = "FAIL"
-        error = str(e)
-        if hasattr(sched, "get_run_summary"):
-            run_summary = sched.get_run_summary()
-    finally:
-        try:
-            fault_f.close()
-        except Exception:
-            pass
-        try:
-            evs.close()
-        except Exception:
-            pass
-        sched.close()
+            # Remember previous assignment
+            prev_assign = {d: set(assign[d]) for d in S.domains}
 
-    # Write summary file
-    try:
-        with open(os.path.join(logs_dir, "run_summary.json"), "w", encoding="utf-8") as f:
-            json.dump(run_summary, f, indent=2)
-    except Exception:
-        pass
+        # After run: generate interactive coverage report
+        if write_html_coverage:
+            generate_coverage_report(coverage_records, S.domains, rotation_period_ticks,
+                                     coverage_html_path, coverage_png_path)
 
     return {
-        "status": status,
-        "error": error,
-        "logs_dir": logs_dir,
-        "initial_faults": int(initial_faults),
-        "run_summary": run_summary
+        "event_stream.log": event_stream_path,
+        "handoff_log.csv": handoff_log_path,
+        "battery_log.csv": battery_log_path,
+        "coverage_report.html": coverage_html_path
     }
 
+def generate_coverage_report(coverage_records: List[Dict], domains: List[str],
+                             rotation_period_ticks: int,
+                             html_path: str, png_path: str):
+    # Re-shape data per domain
+    by_domain: Dict[str, Dict[str, List]] = {d: {"tick": [], "assigned": [], "required": [], "gap": [], "rotation": []}
+                                             for d in domains}
+    for rec in coverage_records:
+        d = rec["domain"]
+        for k in ["tick", "assigned", "required", "gap", "rotation_boundary"]:
+            key = "rotation" if k == "rotation_boundary" else k
+            by_domain[d][key].append(rec[k])
 
-if __name__ == "__main__":
-    ap = argparse.ArgumentParser()
-    ap.add_argument("mission")
-    ap.add_argument("--ticks", type=int, default=200)
-    ap.add_argument("--logs_dir", default="runner_logs")
-    ap.add_argument("--initial_faults", type=int, default=0)
-    ap.add_argument("--capacity_per_unit", type=int, default=2)
-    args = ap.parse_args()
+    if PLOTLY_AVAILABLE:
+        # Interactive figure with one row per domain
+        rows = len(domains)
+        fig = make_subplots(rows=rows, cols=1, shared_xaxes=True,
+                            subplot_titles=[f"Domain: {d}" for d in domains])
 
-    result = run_mission(args.mission, args.ticks, args.logs_dir, args.initial_faults, args.capacity_per_unit)
-    print(json.dumps(result))
+        for i, d in enumerate(domains, start=1):
+            ticks = by_domain[d]["tick"]
+            assigned = by_domain[d]["assigned"]
+            required = by_domain[d]["required"]
+            gaps = by_domain[d]["gap"]
+
+            fig.add_trace(go.Scatter(
+                x=ticks, y=assigned, name=f"{d} assigned",
+                mode="lines", line=dict(color="royalblue")), row=i, col=1)
+
+            fig.add_trace(go.Scatter(
+                x=ticks, y=required, name=f"{d} required",
+                mode="lines", line=dict(color="orange", dash="dash")), row=i, col=1)
+
+            # Highlight gaps as red markers
+            gap_ticks = [t for t, g in zip(ticks, gaps) if g == 1]
+            gap_vals = [assigned[j] for j, g in enumerate(gaps) if g == 1]
+            if gap_ticks:
+                fig.add_trace(go.Scatter(
+                    x=gap_ticks, y=gap_vals,
+                    name=f"{d} coverage gaps",
+                    mode="markers", marker=dict(color="red", size=6, symbol="x")),
+                    row=i, col=1)
+
+        # Add vertical lines for rotation boundaries
+        max_tick = max(coverage_records, key=lambda r: r["tick"])["tick"] if coverage_records else 0
+        if rotation_period_ticks > 0 and max_tick > 0:
+            for x in range(rotation_period_ticks, max_tick + 1, rotation_period_ticks):
+                fig.add_vline(x=x, line=dict(color="gray", dash="dot", width=1))
+
+        fig.update_layout(
+            title="Coverage Timeline (Assigned vs Required) — hover to inspect",
+            height=300 * len(domains),
+            legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        )
+
+        # Annotate if there are no gaps at all
+        total_gaps = sum(rec["gap"] for rec in coverage_records)
+        if total_gaps == 0:
+            fig.add_annotation(text="✅ No coverage gaps detected",
+                               xref="paper", yref="paper", x=0.01, y=1.05, showarrow=False, font=dict(color="green"))
+
+        plotly_offline_plot(fig, filename=html_path, auto_open=False)
+    else:
+        # Fallback static PNG (matplotlib)
+        rows = len(domains)
+        fig, axes = plt.subplots(rows, 1, figsize=(12, 3 * rows), sharex=True)
+        if rows == 1:
+            axes = [axes]
+        for ax, d in zip(axes, domains):
+            ticks = by_domain[d]["tick"]
+            assigned = by_domain[d]["assigned"]
+            required = by_domain[d]["required"]
+            ax.plot(ticks, assigned, label=f"{d} assigned", color="royalblue")
+            ax.plot(ticks, required, label=f"{d} required", color="orange", linestyle="--")
+            gaps = by_domain[d]["gap"]
+            gap_ticks = [t for t, g in zip(ticks, gaps) if g == 1]
+            gap_vals = [assigned[j] for j, g in enumerate(gaps) if g == 1]
+            ax.scatter(gap_ticks, gap_vals, label=f"{d} gaps", color="red", marker="x")
+            ax.legend()
+            ax.set_ylabel("Units")
+        axes[-1].set_xlabel("Tick")
+        fig.suptitle("Coverage Timeline (Assigned vs Required)")
+        fig.tight_layout()
+        fig.savefig(png_path)
