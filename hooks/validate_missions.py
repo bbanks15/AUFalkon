@@ -1,16 +1,25 @@
 
 #!/usr/bin/env python3
 """
+hooks/validate_missions.py
+
 Mission validation hook / utility.
 
 Usage:
-  python validate-missions.py --glob "missions/mission_*.json"
+  python hooks/validate_missions.py
+  python hooks/validate_missions.py --glob "DemoProfile/*_mission.json"
+  python hooks/validate_missions.py --glob "DemoProfile/*_mission.json,missions/mission_*.json"
 
 Validates:
 - required top-level keys: tick_ms, domains, units, constraints.max_gap_ms
 - required_active_per_domain can be int or dict per domain
-- universal_roles is recommended; when true, pools can exist but are not required for feasibility
-- basic sanity checks for types and positive values
+- universal_roles recommended; if true, pools are optional for feasibility
+- basic sanity checks for referenced unit names
+
+Update:
+- Default glob points to DemoProfile exports:
+    DemoProfile/*_mission.json
+- Supports comma-separated globs for convenience.
 """
 
 import argparse
@@ -19,14 +28,31 @@ import json
 import sys
 from typing import Any, Dict, List
 
+
 def fail(msg: str) -> None:
+    """Raise a consistent validation error."""
     raise ValueError(msg)
 
+
 def load_json(path: str) -> Dict[str, Any]:
+    """Load JSON from file."""
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
 
+
+def expand_globs(globs_csv: str) -> List[str]:
+    """
+    Expand a comma-separated list of glob patterns into a sorted, de-duplicated file list.
+    """
+    patterns = [g.strip() for g in (globs_csv or "").split(",") if g.strip()]
+    files: List[str] = []
+    for pat in patterns:
+        files.extend(glob.glob(pat))
+    return sorted(set(files))
+
+
 def validate_one(path: str) -> Dict[str, Any]:
+    """Validate one mission file and return summary."""
     m = load_json(path)
 
     if "tick_ms" not in m:
@@ -40,9 +66,6 @@ def validate_one(path: str) -> Dict[str, Any]:
     max_gap_ms = int(m["constraints"]["max_gap_ms"])
     if max_gap_ms <= 0:
         fail("constraints.max_gap_ms must be > 0")
-    if max_gap_ms < tick_ms:
-        # not fatal, but suspicious
-        pass
 
     domains = m.get("domains")
     if not isinstance(domains, list) or not domains or not all(isinstance(d, str) and d for d in domains):
@@ -52,15 +75,12 @@ def validate_one(path: str) -> Dict[str, Any]:
     if not isinstance(units, list) or not units or not all(isinstance(u, str) and u for u in units):
         fail("units must be a non-empty list of strings")
 
-    # per-domain required_active support
+    # Normalize required map
     req_cfg = m.get("required_active_per_domain", 1)
-    required_map: Dict[str, int] = {}
     if isinstance(req_cfg, dict):
-        for d in domains:
-            required_map[d] = int(req_cfg.get(d, 1))
+        required_map = {d: int(req_cfg.get(d, 1)) for d in domains}
     else:
-        val = int(req_cfg)
-        required_map = {d: val for d in domains}
+        required_map = {d: int(req_cfg) for d in domains}
 
     for d, r in required_map.items():
         if r <= 0:
@@ -68,35 +88,27 @@ def validate_one(path: str) -> Dict[str, Any]:
 
     universal = bool(m.get("universal_roles", False))
 
-    # domain_pools (optional if universal_roles=true)
     pools = m.get("domain_pools", {})
     if not isinstance(pools, dict):
-        fail("domain_pools must be an object/dict if present")
+        fail("domain_pools must be a dict/object")
 
-    # if not universal, ensure pools exist for each domain
+    # If not universal, each domain must have a non-empty pool
     if not universal:
         for d in domains:
             if d not in pools:
-                fail(f"missing domain_pools entry for domain '{d}' (or set universal_roles=true)")
+                fail(f"missing domain_pools['{d}'] (or set universal_roles=true)")
             if not isinstance(pools[d], list) or not pools[d]:
                 fail(f"domain_pools['{d}'] must be a non-empty list (or set universal_roles=true)")
 
-    # if pools reference units, ensure they exist
+    # Pools must reference valid units
     unit_set = set(units)
     for k, v in pools.items():
-        if k == "spares":
-            if not isinstance(v, list):
-                fail("domain_pools.spares must be a list")
-            bad = [u for u in v if u not in unit_set]
-            if bad:
-                fail(f"domain_pools.spares contains unknown units: {bad}")
-            continue
         if isinstance(v, list):
             bad = [u for u in v if u not in unit_set]
             if bad:
                 fail(f"domain_pools['{k}'] contains unknown units: {bad}")
 
-    # failure injections sanity
+    # failure_injections sanity
     inj = m.get("failure_injections", [])
     if inj is not None:
         if not isinstance(inj, list):
@@ -109,6 +121,11 @@ def validate_one(path: str) -> Dict[str, Any]:
             if ev["unit"] not in unit_set:
                 fail(f"failure injection references unknown unit: {ev['unit']}")
 
+    # domain_weights sanity (optional)
+    dw = m.get("domain_weights", {})
+    if dw is not None and not isinstance(dw, dict):
+        fail("domain_weights must be an object/dict if present")
+
     return {
         "mission": path,
         "ok": True,
@@ -120,22 +137,27 @@ def validate_one(path: str) -> Dict[str, Any]:
         "required_map": required_map,
     }
 
-def main():
+
+def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--glob", default="missions/mission_*.json")
+    ap.add_argument(
+        "--glob",
+        default="DemoProfile/*_mission.json",
+        help="Comma-separated glob(s) to mission JSON files. Default: DemoProfile/*_mission.json",
+    )
     args = ap.parse_args()
 
-    paths = sorted(glob.glob(args.glob))
+    paths = expand_globs(args.glob)
     if not paths:
-        print(f"No missions match {args.glob}")
+        print(f"No missions match: {args.glob}")
         return 1
 
     ok = 0
     bad = 0
     for p in paths:
         try:
-            r = validate_one(p)
-            print(f"[OK] {p} universal_roles={r['universal_roles']} units={r['units']} domains={r['domains']}")
+            validate_one(p)
+            print(f"[OK] {p}")
             ok += 1
         except Exception as e:
             print(f"[FAIL] {p}: {e}")
@@ -147,6 +169,7 @@ def main():
 
     print(f"\nValidation passed: {ok} mission(s).")
     return 0
+
 
 if __name__ == "__main__":
     sys.exit(main())

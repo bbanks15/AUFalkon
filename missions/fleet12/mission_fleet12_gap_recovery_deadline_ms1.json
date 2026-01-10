@@ -1,0 +1,99 @@
+{
+  "mission_window_ms": {
+    "start_ms": 0,
+    "end_ms": 90000
+  },
+  "tick_ms": 1,
+  "universal_roles": true,
+  "domains": [
+    "radar_ir_gps",
+    "comm_eoir",
+    "network_test_only",
+    "rest"
+  ],
+  "rotation": {
+    "rest_duration_ms": 60000,
+    "min_dwell_ms": 30,
+    "only_one_rest": false
+  },
+  "fairness": "deadline",
+  "constraints": {
+    "max_gap_ms": 15000,
+    "jitter_budget_ms": 10
+  },
+  "domain_weights": {
+    "radar_ir_gps": 1.0,
+    "comm_eoir": 0.9,
+    "network_test_only": 0.8,
+    "rest": 1.0
+  },
+  "fleet_id": 12,
+  "fleet_devices": 12,
+  "units": [
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "I",
+    "J",
+    "K",
+    "L"
+  ],
+  "required_active_per_domain": {
+    "radar_ir_gps": 1,
+    "comm_eoir": 1,
+    "network_test_only": 1
+  },
+  "domain_pools": {
+    "radar_ir_gps": [
+      "A",
+      "B",
+      "C",
+      "D"
+    ],
+    "comm_eoir": [
+      "E",
+      "F",
+      "G",
+      "H"
+    ],
+    "network_test_only": [
+      "I",
+      "J",
+      "K"
+    ],
+    "spares": [
+      "L",
+      "D",
+      "H"
+    ]
+  },
+  "failure_injections": [
+    {
+      "type": "unit_crash",
+      "unit": "I",
+      "at_ms": 10000,
+      "duration_ms": 8000,
+      "permanent": false
+    },
+    {
+      "type": "unit_crash",
+      "unit": "E",
+      "at_ms": 25000,
+      "duration_ms": 7000,
+      "permanent": false
+    }
+  ],
+  "scenario": "gap_recovery",
+  "recommended_ui": {
+    "rotation_period_ms": 60000,
+    "min_dwell_ms": 30,
+    "fail_on_gap": true,
+    "gap_recovery_ticks": 100,
+    "notes": "gap_recovery (official) \u2014 mission.rotation is authoritative; REST is reporting-only domain"
+  }
+}

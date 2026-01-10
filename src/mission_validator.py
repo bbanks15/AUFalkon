@@ -1,4 +1,20 @@
 
+"""
+mission_validator.py
+
+Validates a mission JSON file and computes basic feasibility metrics.
+
+Main responsibilities:
+- Validate mission structure and required keys
+- Normalize required_active_per_domain into a per-domain dict
+- Provide feasibility metrics given a per-device capacity assumption
+
+Notes:
+- This validator treats "universal_roles" missions as count-feasible if
+  total capacity >= total requirements.
+- It does not model domain-weighted drain or battery policies; those are runtime behaviors.
+"""
+
 import json
 import argparse
 import math
@@ -7,9 +23,12 @@ from typing import Dict, Any, List
 
 def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]:
     """
-    Support:
-      - required_active_per_domain: int
-      - required_active_per_domain: {domain: int, ...}
+    Normalize required_active_per_domain to a per-domain dict.
+
+    Supported:
+      - int
+      - dict {domain: int}
+
     Missing domain keys default to 1.
     """
     req_cfg = mission.get("required_active_per_domain", 1)
@@ -18,7 +37,6 @@ def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]
     else:
         rm = {d: int(req_cfg) for d in domains}
 
-    # Sanity
     for d, v in rm.items():
         if v <= 0:
             raise ValueError(f"required_active_per_domain for '{d}' must be > 0, got {v}")
@@ -26,6 +44,7 @@ def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]
 
 
 def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
+    """Validate mission JSON and compute feasibility metrics."""
     with open(mission_path, "r", encoding="utf-8") as f:
         mission = json.load(f)
 
@@ -48,14 +67,10 @@ def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
         needed_devices = 10**9
         fmax = 0
     else:
-        # Under universal_roles, worst-case/adversarial depends only on how many devices remain,
-        # because any unit can serve any role. So we can compute by count.
         feasible = (n_devices * capacity_per_device) >= needs_total
         needed_devices = math.ceil(needs_total / capacity_per_device)
         fmax = max(0, n_devices - needed_devices)
 
-    # Contingency threshold: when cap=1 cannot meet needs_total
-    # - If alive_devices < needs_total, you must allow multi-role (cap=2) to remain feasible.
     contingency_starts_at_faults = max(0, n_devices - needs_total + 1)
 
     return {
@@ -64,14 +79,14 @@ def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
         "units": len(units),
         "domains": len(domains),
         "capacity_per_device": int(capacity_per_device),
-        "required_active_per_domain": required_map,  # per-domain
+        "required_active_per_domain": required_map,
         "needs_total": needs_total,
         "universal_roles": universal,
         "feasible": bool(feasible),
         "needed_devices": int(needed_devices),
         "Fmax": int(fmax),
         "contingency_starts_at_faults": int(contingency_starts_at_faults),
-        "guarantee_mode": "worst_case_by_count (universal_roles assumed)" if universal else "non-universal (update validator if needed)"
+        "guarantee_mode": "worst_case_by_count (universal_roles assumed)" if universal else "non-universal (update validator if needed)",
     }
 
 
