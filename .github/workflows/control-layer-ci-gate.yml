@@ -27,7 +27,7 @@ jobs:
 
       - name: Run CI Gate with fault sweep
         run: |
-          python src/ci_gate.py --missions_glob "missions/mission_*.json" --ticks 200 --sweep
+          python src/ci_gate.py --missions_glob "missions/**/mission*.json" --ticks 200 --sweep
 
       - name: Collect runner logs & summary
         if: always()
@@ -35,7 +35,8 @@ jobs:
           mkdir -p artifacts
           cp fault_sweep_summary.json artifacts/fault_sweep_summary.json || true
 
-          for f in missions/mission_*.json; do
+          # Find missions recursively and collect artifacts for each.
+          while IFS= read -r f; do
             bn=$(basename "$f" .json)
             # We don't know Fmax here; cap artifact collection to 50 by default.
             for n in $(seq 0 50); do
@@ -46,7 +47,7 @@ jobs:
                 cp "$d"/run_summary.json  "artifacts/run_summary_${bn}_faults${n}.json" || true
               fi
             done
-          done
+          done < <(find missions -type f -name 'mission*.json' | sort)
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
