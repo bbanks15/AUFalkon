@@ -1,0 +1,21 @@
+{
+  "ticks_total": 200,
+  "time_ms_total": 200,
+  "sample_every_ticks": 50,
+  "total_required_roles": 3,
+  "distinct_ok_ticks": 200,
+  "distinct_ok_pct": 100.0,
+  "multi_role_ticks": 0,
+  "multi_role_pct": 0.0,
+  "total_assignments": 600,
+  "battery_dead_units": [],
+  "battery_dead_first_tick": {},
+  "domain_weights": {
+    "radar_ir_gps": 1.0,
+    "comm_eoir": 1.0,
+    "network_test_only": 1.0,
+    "rest": 1.0
+  },
+  "tick_ms": 1.0,
+  "rotation_period_ms": 120000
+}

@@ -1,0 +1,15 @@
+[2026-01-11T02:32:48] report generation
+run_dir=/workspaces/AUFalkon/ci_runs/mission_fleet5_jitter_stress_deadline_ms5
+exists battery_samples.csv=True
+exists assignment_samples.csv=True
+exists events.csv=True
+exists summary.json=True
+OK battery_heatmap
+OK state_counts
+OK distinctness
+OK drain_share
+--- PNG existence ---
+battery_heatmap.png exists=True size=27260
+state_counts.png exists=True size=26048
+distinctness.png exists=True size=31558
+drain_share.png exists=True size=39448

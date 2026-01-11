@@ -1,0 +1,8 @@
+{
+  "created_at": "2026-01-11T02:31:22",
+  "run_dir": "/workspaces/AUFalkon/ci_runs/mission_fleet4_recharge_priority_stress_deadline_ms1",
+  "mission_path": "missions/fleet4/mission_fleet4_recharge_priority_stress_deadline_ms1.json",
+  "mission_file": "mission_fleet4_recharge_priority_stress_deadline_ms1.json",
+  "ticks": 200,
+  "capacity_per_unit": 2
+}

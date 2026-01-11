@@ -25,6 +25,8 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
+          # plotting deps required by src/report_builder.py
+          pip install matplotlib numpy
 
       - name: Debug - show repo structure
         run: |

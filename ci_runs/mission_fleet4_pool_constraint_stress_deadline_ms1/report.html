@@ -1,0 +1,81 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset='utf-8'/>
+  <title>AUFalkon Mission Report</title>
+  <style>
+    body { font-family: Segoe UI, Arial, sans-serif; margin: 18px; color: #111; }
+    .hdr { background: #f4f6f8; padding: 12px 14px; border-radius: 10px; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+    .card { border: 1px solid #ddd; border-radius: 10px; padding: 10px 12px; background: white; }
+    .muted { color: #666; }
+    pre { background: #0b1020; color: #e6e6e6; padding: 10px; border-radius: 10px; overflow-x: auto; }
+    img { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 8px; }
+    table { border-collapse: collapse; width: 100%; }
+    th, td { border: 1px solid #ddd; padding: 6px 8px; font-size: 12px; }
+    th { background: #fafafa; text-align: left; }
+    .warn { padding: 10px; border-radius: 10px; background: #fcf8e3; border: 1px solid #f0ad4e; color: #8a6d3b; }
+    </style>
+</head>
+<body>
+  <div class='hdr'>
+    <h2 style='margin:0'>AUFalkon Mission Report</h2>
+    <div class='muted'>Run folder: <code>/workspaces/AUFalkon/ci_runs/mission_fleet4_pool_constraint_stress_deadline_ms1</code></div>
+    <div class='muted'>Created: <code>2026-01-11T02:31:22</code></div>
+    <div class='muted'>Mission: <code>mission_fleet4_pool_constraint_stress_deadline_ms1.json</code></div>
+    <div style='margin-top:8px'>
+      <b>Report Type:</b> FINAL<br/>
+      <b>Generated At:</b> 2026-01-11 02:32:39 UTC
+    </div>
+  </div>
+
+  <div class='grid'>
+    <div class='card'><h3>Summary</h3><pre>{
+  &quot;ticks_total&quot;: 200,
+  &quot;time_ms_total&quot;: 200,
+  &quot;sample_every_ticks&quot;: 50,
+  &quot;total_required_roles&quot;: 3,
+  &quot;distinct_ok_ticks&quot;: 200,
+  &quot;distinct_ok_pct&quot;: 100.0,
+  &quot;multi_role_ticks&quot;: 0,
+  &quot;multi_role_pct&quot;: 0.0,
+  &quot;total_assignments&quot;: 600,
+  &quot;battery_dead_units&quot;: [],
+  &quot;battery_dead_first_tick&quot;: {},
+  &quot;domain_weights&quot;: {
+    &quot;radar_ir_gps&quot;: 1.0,
+    &quot;comm_eoir&quot;: 0.9,
+    &quot;network_test_only&quot;: 0.8,
+    &quot;rest&quot;: 1.0
+  },
+  &quot;tick_ms&quot;: 1.0,
+  &quot;rotation_period_ms&quot;: 120000
+}</pre></div>
+    <div class='card'><h3>Run Meta</h3><pre>{
+  &quot;created_at&quot;: &quot;2026-01-11T02:31:22&quot;,
+  &quot;run_dir&quot;: &quot;/workspaces/AUFalkon/ci_runs/mission_fleet4_pool_constraint_stress_deadline_ms1&quot;,
+  &quot;mission_path&quot;: &quot;missions/fleet4/mission_fleet4_pool_constraint_stress_deadline_ms1.json&quot;,
+  &quot;mission_file&quot;: &quot;mission_fleet4_pool_constraint_stress_deadline_ms1.json&quot;,
+  &quot;ticks&quot;: 200,
+  &quot;capacity_per_unit&quot;: 2
+}</pre></div>
+  </div>
+
+  <h2 style='margin-top:18px'>Charts</h2>
+  <div class='grid'>
+    <div class='card'><h3>Battery Heatmap</h3><div class='muted'>battery_heatmap.png</div><img src='battery_heatmap.png' alt='battery_heatmap'/></div>
+<div class='card'><h3>State Counts</h3><div class='muted'>state_counts.png</div><img src='state_counts.png' alt='state_counts'/></div>
+<div class='card'><h3>Distinctness</h3><div class='muted'>distinctness.png</div><img src='distinctness.png' alt='distinctness'/></div>
+<div class='card'><h3>Drain Share</h3><div class='muted'>drain_share.png</div><img src='drain_share.png' alt='drain_share'/></div>
+  </div>
+
+  <h2 style='margin-top:18px'>Recent Events (first 60)</h2>
+  <div class='card'>
+    <div class='muted'>Source: <code>events.csv</code></div>
+    <table>
+      <tr><th>tick</th><th>ms</th><th>kind</th><th>detail</th></tr>
+      <tr><td colspan='4' class='muted'>(none)</td></tr>
+    </table>
+  </div>
+</body>
+</html>
