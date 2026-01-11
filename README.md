@@ -5,13 +5,15 @@ This repository contains a deadline-first control-layer simulation with:
 - GUI simulator (temporary + permanent failure buttons)
 - Mission runner (headless; change-only CSV logs)
 - CI gate with fault sweep 0..Fmax and artifact upload
-- Pre-commit mission validation hook
+- Pre-commit / hook mission validation
 
 ## Folder layout
 - `src/` Python sources
-- `missions/` mission JSONs (CI scans `missions/mission_*.json`)
+- `missions/` mission JSONs (CI scans `missions/**/mission*.json`)
 - `docs/` assumptions and RTOS notes
 - `.github/workflows/` GitHub Actions workflows
+
+> Note: GitHub runners are case-sensitive: folder name must be `missions` (lowercase).
 
 ## Quickstart (local)
 ```bash
@@ -25,10 +27,10 @@ pre-commit install
 pre-commit run --all-files
 
 # run headless
-python src/mission_runner.py missions/mission_fleet12_deadline_ms1.json --ticks 200 --logs_dir runner_logs_demo --initial_faults 0
+python src/mission_runner.py missions/fleet12/mission_fleet12_deadline_ms1.json --ticks 200 --logs_dir runner_logs_demo --initial_faults 0
 
 # run GUI
-python src/gui_sim.py
+python -m src.gui_sim
 ```
 
 ## Quickstart (CI)
@@ -37,4 +39,10 @@ python src/gui_sim.py
 - Run `control-layer-ci-gate` (auto-runs on push/PR).
 - Download artifacts:
   - `fault_sweep_summary.json`
-  - `timeline_*_faultsN.csv`, `matrix_*_faultsN.csv`
+  - `runner_logs_*` directories (CSV logs inside)
+
+## Mission validation (hook)
+Run locally:
+```bash
+python hooks/validate_missions.py --glob "DemoProfile/*_mission.json,missions/**/mission*.json"
+```

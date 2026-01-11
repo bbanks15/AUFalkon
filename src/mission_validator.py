@@ -1,13 +1,14 @@
-
-"""
-mission_validator.py
+"""src/mission_validator.py
 
 Validates a mission JSON file and computes basic feasibility metrics.
 
-Main responsibilities:
-- Validate mission structure and required keys
-- Normalize required_active_per_domain into a per-domain dict
-- Provide feasibility metrics given a per-device capacity assumption
+Updates (aligned with GUI/scheduler semantics):
+- Enforces that mission.domains includes 'rest' (reporting-only domain required by simulator).
+- Normalizes required_active_per_domain into a per-domain dict:
+    * If dict: missing domain keys default to 0
+    * If scalar: applies to all domains except 'rest'
+    * 'rest' requirement is always 0
+  Requirements must be >= 0 (0 means not required).
 
 Notes:
 - This validator treats "universal_roles" missions as count-feasible if
@@ -15,31 +16,48 @@ Notes:
 - It does not model domain-weighted drain or battery policies; those are runtime behaviors.
 """
 
-import json
+from __future__ import annotations
+
 import argparse
+import json
 import math
-from typing import Dict, Any, List
+from typing import Any, Dict, List
 
 
 def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]:
-    """
-    Normalize required_active_per_domain to a per-domain dict.
+    """Normalize required_active_per_domain to a per-domain dict.
 
     Supported:
       - int
       - dict {domain: int}
 
-    Missing domain keys default to 1.
+    Semantics:
+      - missing keys default to 0
+      - 'rest' is reporting-only => always 0
+      - values must be >= 0
     """
     req_cfg = mission.get("required_active_per_domain", 1)
+
+    def is_rest(d: str) -> bool:
+        return str(d).lower() == "rest"
+
+    rm: Dict[str, int] = {}
+
     if isinstance(req_cfg, dict):
-        rm = {d: int(req_cfg.get(d, 1)) for d in domains}
+        for d in domains:
+            if is_rest(d):
+                rm[d] = 0
+            else:
+                rm[d] = int(req_cfg.get(d, 0))
     else:
-        rm = {d: int(req_cfg) for d in domains}
+        val = int(req_cfg)
+        for d in domains:
+            rm[d] = 0 if is_rest(d) else val
 
     for d, v in rm.items():
-        if v <= 0:
-            raise ValueError(f"required_active_per_domain for '{d}' must be > 0, got {v}")
+        if v < 0:
+            raise ValueError(f"required_active_per_domain for '{d}' must be >= 0, got {v}")
+
     return rm
 
 
@@ -56,6 +74,10 @@ def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
     if not domains or not isinstance(domains, list):
         raise ValueError("mission.domains must be a non-empty list")
 
+    # Enforce REST domain for simulator semantics
+    if not any(str(d).lower() == "rest" for d in domains):
+        raise ValueError("mission.domains must include 'rest' (reporting-only domain required by simulator)")
+
     n_devices = int(mission.get("fleet_devices", len(units)))
     universal = bool(mission.get("universal_roles", False))
 
@@ -68,7 +90,7 @@ def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
         fmax = 0
     else:
         feasible = (n_devices * capacity_per_device) >= needs_total
-        needed_devices = math.ceil(needs_total / capacity_per_device)
+        needed_devices = math.ceil(needs_total / capacity_per_device) if needs_total > 0 else 0
         fmax = max(0, n_devices - needed_devices)
 
     contingency_starts_at_faults = max(0, n_devices - needs_total + 1)

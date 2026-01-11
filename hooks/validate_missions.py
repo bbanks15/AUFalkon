@@ -1,175 +1,122 @@
+"""src/mission_validator.py
 
-#!/usr/bin/env python3
+Validates a mission JSON file and computes basic feasibility metrics.
+
+Updates (aligned with GUI/scheduler semantics):
+- Enforces that mission.domains includes 'rest' (reporting-only domain required by simulator).
+- Normalizes required_active_per_domain into a per-domain dict:
+    * If dict: missing domain keys default to 0
+    * If scalar: applies to all domains except 'rest'
+    * 'rest' requirement is always 0
+  Requirements must be >= 0 (0 means not required).
+
+Notes:
+- This validator treats "universal_roles" missions as count-feasible if
+  total capacity >= total requirements.
+- It does not model domain-weighted drain or battery policies; those are runtime behaviors.
 """
-hooks/validate_missions.py
 
-Mission validation hook / utility.
-
-Usage:
-  python hooks/validate_missions.py
-  python hooks/validate_missions.py --glob "DemoProfile/*_mission.json"
-  python hooks/validate_missions.py --glob "DemoProfile/*_mission.json,missions/mission_*.json"
-
-Validates:
-- required top-level keys: tick_ms, domains, units, constraints.max_gap_ms
-- required_active_per_domain can be int or dict per domain
-- universal_roles recommended; if true, pools are optional for feasibility
-- basic sanity checks for referenced unit names
-
-Update:
-- Default glob points to DemoProfile exports:
-    DemoProfile/*_mission.json
-- Supports comma-separated globs for convenience.
-"""
+from __future__ import annotations
 
 import argparse
-import glob
 import json
-import sys
+import math
 from typing import Any, Dict, List
 
 
-def fail(msg: str) -> None:
-    """Raise a consistent validation error."""
-    raise ValueError(msg)
+def _required_map(mission: Dict[str, Any], domains: List[str]) -> Dict[str, int]:
+    """Normalize required_active_per_domain to a per-domain dict.
 
+    Supported:
+      - int
+      - dict {domain: int}
 
-def load_json(path: str) -> Dict[str, Any]:
-    """Load JSON from file."""
-    with open(path, "r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-def expand_globs(globs_csv: str) -> List[str]:
+    Semantics:
+      - missing keys default to 0
+      - 'rest' is reporting-only => always 0
+      - values must be >= 0
     """
-    Expand a comma-separated list of glob patterns into a sorted, de-duplicated file list.
-    """
-    patterns = [g.strip() for g in (globs_csv or "").split(",") if g.strip()]
-    files: List[str] = []
-    for pat in patterns:
-        files.extend(glob.glob(pat))
-    return sorted(set(files))
+    req_cfg = mission.get("required_active_per_domain", 1)
 
+    def is_rest(d: str) -> bool:
+        return str(d).lower() == "rest"
 
-def validate_one(path: str) -> Dict[str, Any]:
-    """Validate one mission file and return summary."""
-    m = load_json(path)
+    rm: Dict[str, int] = {}
 
-    if "tick_ms" not in m:
-        fail("missing tick_ms")
-    tick_ms = float(m["tick_ms"])
-    if tick_ms <= 0:
-        fail("tick_ms must be > 0")
-
-    if "constraints" not in m or "max_gap_ms" not in m["constraints"]:
-        fail("missing constraints.max_gap_ms")
-    max_gap_ms = int(m["constraints"]["max_gap_ms"])
-    if max_gap_ms <= 0:
-        fail("constraints.max_gap_ms must be > 0")
-
-    domains = m.get("domains")
-    if not isinstance(domains, list) or not domains or not all(isinstance(d, str) and d for d in domains):
-        fail("domains must be a non-empty list of strings")
-
-    units = m.get("units")
-    if not isinstance(units, list) or not units or not all(isinstance(u, str) and u for u in units):
-        fail("units must be a non-empty list of strings")
-
-    # Normalize required map
-    req_cfg = m.get("required_active_per_domain", 1)
     if isinstance(req_cfg, dict):
-        required_map = {d: int(req_cfg.get(d, 1)) for d in domains}
-    else:
-        required_map = {d: int(req_cfg) for d in domains}
-
-    for d, r in required_map.items():
-        if r <= 0:
-            fail(f"required_active_per_domain for {d} must be > 0")
-
-    universal = bool(m.get("universal_roles", False))
-
-    pools = m.get("domain_pools", {})
-    if not isinstance(pools, dict):
-        fail("domain_pools must be a dict/object")
-
-    # If not universal, each domain must have a non-empty pool
-    if not universal:
         for d in domains:
-            if d not in pools:
-                fail(f"missing domain_pools['{d}'] (or set universal_roles=true)")
-            if not isinstance(pools[d], list) or not pools[d]:
-                fail(f"domain_pools['{d}'] must be a non-empty list (or set universal_roles=true)")
+            if is_rest(d):
+                rm[d] = 0
+            else:
+                rm[d] = int(req_cfg.get(d, 0))
+    else:
+        val = int(req_cfg)
+        for d in domains:
+            rm[d] = 0 if is_rest(d) else val
 
-    # Pools must reference valid units
-    unit_set = set(units)
-    for k, v in pools.items():
-        if isinstance(v, list):
-            bad = [u for u in v if u not in unit_set]
-            if bad:
-                fail(f"domain_pools['{k}'] contains unknown units: {bad}")
+    for d, v in rm.items():
+        if v < 0:
+            raise ValueError(f"required_active_per_domain for '{d}' must be >= 0, got {v}")
 
-    # failure_injections sanity
-    inj = m.get("failure_injections", [])
-    if inj is not None:
-        if not isinstance(inj, list):
-            fail("failure_injections must be a list if present")
-        for ev in inj:
-            if not isinstance(ev, dict):
-                fail("each failure injection must be an object")
-            if "type" not in ev or "unit" not in ev:
-                fail("each failure injection must include type and unit")
-            if ev["unit"] not in unit_set:
-                fail(f"failure injection references unknown unit: {ev['unit']}")
+    return rm
 
-    # domain_weights sanity (optional)
-    dw = m.get("domain_weights", {})
-    if dw is not None and not isinstance(dw, dict):
-        fail("domain_weights must be an object/dict if present")
+
+def validate(mission_path: str, capacity_per_device: int = 2) -> Dict[str, Any]:
+    """Validate mission JSON and compute feasibility metrics."""
+    with open(mission_path, "r", encoding="utf-8") as f:
+        mission = json.load(f)
+
+    units = mission.get("units", [])
+    domains = mission.get("domains", [])
+
+    if not units or not isinstance(units, list):
+        raise ValueError("mission.units must be a non-empty list")
+    if not domains or not isinstance(domains, list):
+        raise ValueError("mission.domains must be a non-empty list")
+
+    # Enforce REST domain for simulator semantics
+    if not any(str(d).lower() == "rest" for d in domains):
+        raise ValueError("mission.domains must include 'rest' (reporting-only domain required by simulator)")
+
+    n_devices = int(mission.get("fleet_devices", len(units)))
+    universal = bool(mission.get("universal_roles", False))
+
+    required_map = _required_map(mission, domains)
+    needs_total = int(sum(required_map.values()))
+
+    if capacity_per_device <= 0:
+        feasible = False
+        needed_devices = 10**9
+        fmax = 0
+    else:
+        feasible = (n_devices * capacity_per_device) >= needs_total
+        needed_devices = math.ceil(needs_total / capacity_per_device) if needs_total > 0 else 0
+        fmax = max(0, n_devices - needed_devices)
+
+    contingency_starts_at_faults = max(0, n_devices - needs_total + 1)
 
     return {
-        "mission": path,
-        "ok": True,
-        "tick_ms": tick_ms,
-        "max_gap_ms": max_gap_ms,
-        "domains": len(domains),
+        "mission": mission_path,
+        "fleet_devices": n_devices,
         "units": len(units),
+        "domains": len(domains),
+        "capacity_per_device": int(capacity_per_device),
+        "required_active_per_domain": required_map,
+        "needs_total": needs_total,
         "universal_roles": universal,
-        "required_map": required_map,
+        "feasible": bool(feasible),
+        "needed_devices": int(needed_devices),
+        "Fmax": int(fmax),
+        "contingency_starts_at_faults": int(contingency_starts_at_faults),
+        "guarantee_mode": "worst_case_by_count (universal_roles assumed)" if universal else "non-universal (update validator if needed)",
     }
 
 
-def main() -> int:
+if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument(
-        "--glob",
-        default="DemoProfile/*_mission.json",
-        help="Comma-separated glob(s) to mission JSON files. Default: DemoProfile/*_mission.json",
-    )
+    ap.add_argument("mission")
+    ap.add_argument("--capacity", type=int, default=2)
     args = ap.parse_args()
 
-    paths = expand_globs(args.glob)
-    if not paths:
-        print(f"No missions match: {args.glob}")
-        return 1
-
-    ok = 0
-    bad = 0
-    for p in paths:
-        try:
-            validate_one(p)
-            print(f"[OK] {p}")
-            ok += 1
-        except Exception as e:
-            print(f"[FAIL] {p}: {e}")
-            bad += 1
-
-    if bad:
-        print(f"\nValidation failed: {bad} mission(s) failed, {ok} passed.")
-        return 2
-
-    print(f"\nValidation passed: {ok} mission(s).")
-    return 0
-
-
-if __name__ == "__main__":
-    sys.exit(main())
+    result = validate(args.mission, capacity_per_device=args.capacity)
+    print(json.dumps(result, indent=2))

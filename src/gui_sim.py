@@ -239,7 +239,10 @@ KNOB_HELP: Dict[str, str] = {
         "If enabled: show a modal once and stop the run when a required-domain gap exceeds mission max_gap_ms."
         "\nIf disabled: never stop by default (demo-friendly), only banners/logging."
     ),
-    "domain_weights override": "Comma-separated domain=weight pairs. Overrides mission weights.",
+    "domain_weights override": "
+"Comma-separated domain=weight pairs (overrides mission weights).\n"
+    "Example: radar_ir_gps=1.25,comm_eoir=0.9,network_test_only=0.8,rest=1.5.\n"
+    "Tip: to only change one domain, supply just that pair (e.g., radar_ir_gps=1.25).",
     "Temp fail (ms)": "Temporarily marks the selected unit down for the specified duration.",
     "Gap grace (ticks)": "Mission-authoritative gap window (constraints.max_gap_ms / tick_ms). Display-only; mission wins.",
     "Generate HTML Report": "Generate an HTML report. While running, this is a SNAPSHOT and includes a fresh summary.json.",
