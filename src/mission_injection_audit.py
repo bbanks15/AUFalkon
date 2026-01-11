@@ -29,6 +29,11 @@ import os
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
+# Optional deterministic run import
+try:
+    from mission_runner import run_mission
+except Exception:
+    run_mission = None
 
 def read_json(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
@@ -239,6 +244,9 @@ def main() -> int:
     ap.add_argument("--glob", default="missions/**/mission*.json")
     ap.add_argument("--capacity_per_unit", type=int, default=2)
     ap.add_argument("--out_json", default="")
+    ap.add_argument("--deterministic_gaps", action="store_true", help="Run deterministic per-tick simulation for gap_* missions")
+    ap.add_argument("--det_ticks", type=int, default=40000, help="Minimum ticks to use for deterministic runs")
+    ap.add_argument("--det_max_real_seconds", type=int, default=10, help="Wall-clock timeout for deterministic run (seconds)")
     args = ap.parse_args()
 
     paths = expand(args.glob)
@@ -272,6 +280,33 @@ def main() -> int:
             "warnings": heuristic_checks(m, capacity_per_unit=args.capacity_per_unit),
             "injection_impact": injection_impact_checks(m, capacity_per_unit=args.capacity_per_unit),
         }
+        # Optionally run a deterministic per-tick check for gap scenarios
+        if args.deterministic_gaps and entry.get("intent") in ("gap_failure", "gap_recovery"):
+            if run_mission is None:
+                entry["deterministic_run"] = {"status": "ERROR", "error": "run_mission unavailable (import failed)"}
+            else:
+                # Choose ticks: mission_window_ms if present, else args.det_ticks; ensure at least det_ticks
+                try:
+                    mw = int(m.get("mission_window_ms") or 0)
+                except Exception:
+                    mw = 0
+                tick_ms_local = float(m.get("tick_ms", 1.0))
+                ticks_from_window = int(max(0, round(mw / max(tick_ms_local, 1.0)))) if mw > 0 else 0
+                det_ticks = max(args.det_ticks, ticks_from_window if ticks_from_window > 0 else 0)
+                logs_dir = os.path.join("ci_runs", os.path.basename(p).replace(".json", "") + "_deterministic")
+                try:
+                    res = run_mission(
+                        mission_path=p,
+                        ticks=det_ticks,
+                        logs_dir=logs_dir,
+                        capacity_per_unit=args.capacity_per_unit,
+                        initial_faults=0,
+                        until_failure=True,
+                        max_real_seconds=float(args.det_max_real_seconds),
+                    )
+                    entry["deterministic_run"] = res
+                except Exception as e:
+                    entry["deterministic_run"] = {"status": "ERROR", "error": str(e)}
         results.append(entry)
 
     # Print summary

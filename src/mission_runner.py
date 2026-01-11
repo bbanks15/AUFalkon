@@ -50,6 +50,52 @@ def run_mission(
     universal_roles = bool(mission.get("universal_roles", True))
     domain_weights = mission.get("domain_weights", {}) if isinstance(mission.get("domain_weights", {}), dict) else {}
 
+    # --- Read battery / rotation / sampling knobs from mission JSON (GUI mirrors these)
+    rotation_cfg = mission.get("rotation", {}) if isinstance(mission.get("rotation", {}), dict) else {}
+    try:
+        rot_period_ms_mission = int(rotation_cfg.get("rest_duration_ms") or 0)
+    except Exception:
+        rot_period_ms_mission = 0
+    if rot_period_ms_mission <= 0:
+        rot_period_ms_mission = 120000
+
+    try:
+        min_dwell_ms_mission = float(rotation_cfg.get("min_dwell_ms") or 0.0)
+    except Exception:
+        min_dwell_ms_mission = 0.0
+    if min_dwell_ms_mission <= 0:
+        min_dwell_ticks_mission = 30
+    else:
+        min_dwell_ticks_mission = max(0, int(round(min_dwell_ms_mission / max(tick_ms, 0.0001))))
+
+    # Battery-related knobs
+    def _safe_float(v, default):
+        try:
+            return float(v)
+        except Exception:
+            return default
+
+    def _safe_int(v, default):
+        try:
+            return int(v)
+        except Exception:
+            return default
+
+    swap_threshold_pct = _safe_float(mission.get("swap_threshold_pct", 10.0), 10.0)
+    battery_reserve_pct = _safe_float(mission.get("battery_reserve_pct", 0.15), 0.15)
+    hysteresis_pct = _safe_float(mission.get("hysteresis_pct", 0.08), 0.08)
+    wake_threshold_pct = mission.get("wake_threshold_pct", None)
+    if wake_threshold_pct is not None:
+        try:
+            wake_threshold_pct = float(wake_threshold_pct)
+        except Exception:
+            wake_threshold_pct = None
+
+    low_battery_event_every_ms = _safe_int(mission.get("low_battery_event_every_ms", 0), 0)
+    low_battery_event_crossing_only = bool(mission.get("low_battery_event_crossing_only", False))
+    sample_every_ticks = _safe_int(mission.get("sample_every_ticks", 50), 50)
+    battery_life_ms = _safe_int(mission.get("battery_life_ms", DeadlineScheduler.DEFAULT_BATTERY_LIFE_MS), DeadlineScheduler.DEFAULT_BATTERY_LIFE_MS)
+
     # Parse failure_injections into tick-based schedule
     failure_injections = mission.get("failure_injections", []) if isinstance(mission.get("failure_injections", []), list) else []
     injections_parsed: List[Dict[str, Optional[int]]] = []
@@ -80,8 +126,17 @@ def run_mission(
         capacity_per_unit=capacity_per_unit,
         logs_dir=logs_dir,
         universal_roles=universal_roles,
-        rotation_period_ms=120000,
+        rotation_period_ms=rot_period_ms_mission,
+        min_dwell_ticks=min_dwell_ticks_mission,
         domain_weights=domain_weights,
+        swap_threshold_pct=swap_threshold_pct,
+        battery_reserve_pct=battery_reserve_pct,
+        hysteresis_pct=hysteresis_pct,
+        wake_threshold_pct=None if wake_threshold_pct is None else float(wake_threshold_pct),
+        low_battery_event_every_ms=low_battery_event_every_ms,
+        low_battery_event_crossing_only=low_battery_event_crossing_only,
+        sample_every_ticks=sample_every_ticks,
+        battery_life_ms=battery_life_ms,
     )
 
     alive = {u: True for u in units}

@@ -17,5 +17,5 @@
     "rest": 1.0
   },
   "tick_ms": 1.0,
-  "rotation_period_ms": 120000
+  "rotation_period_ms": 60000
 }

@@ -1,0 +1,2 @@
+tick=10000: APPLY crash unit=D permanent=False end_tick=22000
+tick=22000: RESTORE unit=D
