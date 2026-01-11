@@ -12,7 +12,7 @@ This stitched version includes:
 - Report generation mid-run is a SNAPSHOT: does not interrupt sim and forces summary.json write.
 
 Run:
-  python -m src.gui_sim missions\fleet4\mission_fleet4_baseline_deadline_ms1.json
+  python -m src.gui_sim missions/fleet4/mission_fleet4_baseline_deadline_ms1.json
 """
 
 from __future__ import annotations
@@ -239,8 +239,7 @@ KNOB_HELP: Dict[str, str] = {
         "If enabled: show a modal once and stop the run when a required-domain gap exceeds mission max_gap_ms."
         "\nIf disabled: never stop by default (demo-friendly), only banners/logging."
     ),
-    "domain_weights override": "
-"Comma-separated domain=weight pairs (overrides mission weights).\n"
+    "domain_weights override": "Comma-separated domain=weight pairs (overrides mission weights).\n"
     "Example: radar_ir_gps=1.25,comm_eoir=0.9,network_test_only=0.8,rest=1.5.\n"
     "Tip: to only change one domain, supply just that pair (e.g., radar_ir_gps=1.25).",
     "Temp fail (ms)": "Temporarily marks the selected unit down for the specified duration.",

@@ -1,0 +1,64 @@
+
+name: gui-sim-ci
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  run-missions-and-reports:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Debug - show repo structure
+        run: |
+          echo "PWD=$(pwd)"
+          ls -la
+          echo "---- src ----"
+          ls -la src || true
+          echo "---- hooks ----"
+          ls -la hooks || true
+          echo "---- missions ----"
+          ls -la missions || true
+          echo "---- mission sample ----"
+          ls -la missions/* | head -n 200 || true
+
+      - name: Validate missions (enforce rest)
+        run: |
+          python hooks/validate_missions.py --glob "missions/**/mission*.json"
+
+      - name: Audit mission injections vs scenario intent (non-blocking)
+        run: |
+          python src/mission_injection_audit.py --glob "missions/**/mission*.json" --out_json audit_injections.json
+
+      - name: Upload mission injection audit artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: mission_injection_audit
+          path: audit_injections.json
+
+      - name: Run all missions to completion + generate reports
+        run: |
+          python src/run_all_missions_ci.py --missions_glob "missions/**/mission*.json" --out_root ci_runs --default_ticks 200 --capacity_per_unit 2
+
+      - name: Upload CI reports artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ci_reports
+          path: ci_runs

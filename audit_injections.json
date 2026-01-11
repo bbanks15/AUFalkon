@@ -1,0 +1,652 @@
+{
+  "missions": [
+    {
+      "path": "missions\\fleet12\\mission_fleet12_baseline_deadline_ms1.json",
+      "scenario": "baseline",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_battery_stress_deadline_ms1.json",
+      "scenario": "battery_stress",
+      "intent": "battery_stress",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 120000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 2.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_gap_failure_deadline_ms1.json",
+      "scenario": "gap_failure",
+      "intent": "gap_failure",
+      "tick_ms": 1.0,
+      "max_gap_ms": 5000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "I",
+          "at_ms": 10000.0,
+          "duration_ms": 12000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 12000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_gap_recovery_deadline_ms1.json",
+      "scenario": "gap_recovery",
+      "intent": "gap_recovery",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 90000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "I",
+          "at_ms": 10000.0,
+          "duration_ms": 8000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 8000
+        },
+        {
+          "type": "unit_crash",
+          "unit": "E",
+          "at_ms": 25000.0,
+          "duration_ms": 7000.0,
+          "permanent": false,
+          "at_tick": 25000,
+          "duration_ticks": 7000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_jitter_stress_deadline_ms5.json",
+      "scenario": "jitter_stress",
+      "intent": "other",
+      "tick_ms": 5.0,
+      "max_gap_ms": 50,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 6,
+      "capacity_total": 24,
+      "capacity_pressure": 0.25,
+      "max_domain_weight": 1.5,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "E",
+          "at_ms": 15000.0,
+          "duration_ms": 3000.0,
+          "permanent": false,
+          "at_tick": 3000,
+          "duration_ticks": 600
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_multi_role_stress_deadline_ms1.json",
+      "scenario": "multi_role_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_pool_constraint_stress_deadline_ms1.json",
+      "scenario": "pool_constraint_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_recharge_priority_stress_deadline_ms1.json",
+      "scenario": "recharge_priority_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 180000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 3.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet12\\mission_fleet12_rotation_stress_deadline_ms1.json",
+      "scenario": "rotation_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 12,
+      "units": 12,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 24,
+      "capacity_pressure": 0.125,
+      "max_domain_weight": 1.2,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_baseline_deadline_ms1.json",
+      "scenario": "baseline",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_battery_stress_deadline_ms1.json",
+      "scenario": "battery_stress",
+      "intent": "battery_stress",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 120000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 2.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_gap_failure_deadline_ms1.json",
+      "scenario": "gap_failure",
+      "intent": "gap_failure",
+      "tick_ms": 1.0,
+      "max_gap_ms": 5000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "D",
+          "at_ms": 10000.0,
+          "duration_ms": 12000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 12000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_gap_recovery_deadline_ms1.json",
+      "scenario": "gap_recovery",
+      "intent": "gap_recovery",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 90000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "D",
+          "at_ms": 10000.0,
+          "duration_ms": 8000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 8000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_jitter_stress_deadline_ms5.json",
+      "scenario": "jitter_stress",
+      "intent": "other",
+      "tick_ms": 5.0,
+      "max_gap_ms": 50,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.5,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "B",
+          "at_ms": 15000.0,
+          "duration_ms": 3000.0,
+          "permanent": false,
+          "at_tick": 3000,
+          "duration_ticks": 600
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_multi_role_stress_deadline_ms1.json",
+      "scenario": "multi_role_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_pool_constraint_stress_deadline_ms1.json",
+      "scenario": "pool_constraint_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_recharge_priority_stress_deadline_ms1.json",
+      "scenario": "recharge_priority_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 180000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 3.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet4\\mission_fleet4_rotation_stress_deadline_ms1.json",
+      "scenario": "rotation_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 4,
+      "units": 4,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 8,
+      "capacity_pressure": 0.375,
+      "max_domain_weight": 1.2,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_baseline_deadline_ms1.json",
+      "scenario": "baseline",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_battery_stress_deadline_ms1.json",
+      "scenario": "battery_stress",
+      "intent": "battery_stress",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 120000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 2.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_gap_failure_deadline_ms1.json",
+      "scenario": "gap_failure",
+      "intent": "gap_failure",
+      "tick_ms": 1.0,
+      "max_gap_ms": 5000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "D",
+          "at_ms": 10000.0,
+          "duration_ms": 12000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 12000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_gap_recovery_deadline_ms1.json",
+      "scenario": "gap_recovery",
+      "intent": "gap_recovery",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 90000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.0,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "D",
+          "at_ms": 10000.0,
+          "duration_ms": 8000.0,
+          "permanent": false,
+          "at_tick": 10000,
+          "duration_ticks": 8000
+        },
+        {
+          "type": "unit_crash",
+          "unit": "C",
+          "at_ms": 25000.0,
+          "duration_ms": 7000.0,
+          "permanent": false,
+          "at_tick": 25000,
+          "duration_ticks": 7000
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_jitter_stress_deadline_ms5.json",
+      "scenario": "jitter_stress",
+      "intent": "other",
+      "tick_ms": 5.0,
+      "max_gap_ms": 50,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.5,
+      "failure_injections": [
+        {
+          "type": "unit_crash",
+          "unit": "C",
+          "at_ms": 15000.0,
+          "duration_ms": 3000.0,
+          "permanent": false,
+          "at_tick": 3000,
+          "duration_ticks": 600
+        }
+      ],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_multi_role_stress_deadline_ms1.json",
+      "scenario": "multi_role_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_pool_constraint_stress_deadline_ms1.json",
+      "scenario": "pool_constraint_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 15000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_recharge_priority_stress_deadline_ms1.json",
+      "scenario": "recharge_priority_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 180000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 3.0,
+      "failure_injections": [],
+      "warnings": []
+    },
+    {
+      "path": "missions\\fleet5\\mission_fleet5_rotation_stress_deadline_ms1.json",
+      "scenario": "rotation_stress",
+      "intent": "other",
+      "tick_ms": 1.0,
+      "max_gap_ms": 10000,
+      "mission_window_ms": {
+        "start_ms": 0,
+        "end_ms": 60000
+      },
+      "fleet_devices": 5,
+      "units": 5,
+      "domains": 4,
+      "required_total": 3,
+      "capacity_total": 10,
+      "capacity_pressure": 0.3,
+      "max_domain_weight": 1.2,
+      "failure_injections": [],
+      "warnings": []
+    }
+  ]
+}
