@@ -17,7 +17,8 @@ Output:
 
 import json
 import argparse
-from typing import Dict, Any, List
+import time
+from typing import Dict, Any, List, Optional
 
 from scheduler_deadline import DeadlineScheduler
 
@@ -28,6 +29,8 @@ def run_mission(
     logs_dir: str,
     capacity_per_unit: int = 2,
     initial_faults: int = 0,
+    until_failure: bool = False,
+    max_real_seconds: float = 0.0,
 ) -> Dict[str, Any]:
     """Run mission for the given number of ticks."""
     with open(mission_path, "r", encoding="utf-8") as f:
@@ -45,6 +48,27 @@ def run_mission(
 
     universal_roles = bool(mission.get("universal_roles", True))
     domain_weights = mission.get("domain_weights", {}) if isinstance(mission.get("domain_weights", {}), dict) else {}
+
+    # Parse failure_injections into tick-based schedule
+    failure_injections = mission.get("failure_injections", []) if isinstance(mission.get("failure_injections", []), list) else []
+    injections_parsed: List[Dict[str, Optional[int]]] = []
+    for inj in failure_injections:
+        if not isinstance(inj, dict):
+            continue
+        typ = inj.get("type")
+        if typ != "unit_crash":
+            continue
+        unit = inj.get("unit")
+        at_ms = int(inj.get("at_ms", 0) or 0)
+        dur = inj.get("duration_ms")
+        permanent = bool(inj.get("permanent", False)) or (dur is None)
+        start_tick = int(max(0, round(float(at_ms) / tick_ms)))
+        end_tick: Optional[int]
+        if permanent or dur is None:
+            end_tick = None
+        else:
+            end_tick = start_tick + int(max(0, round(float(dur) / tick_ms)))
+        injections_parsed.append({"unit": unit, "start_tick": start_tick, "end_tick": end_tick, "permanent": permanent})
 
     sched = DeadlineScheduler(
         domains=domains,
@@ -77,8 +101,52 @@ def run_mission(
     }
 
     try:
+        start_time = time.time()
+        # track active temporary crashes: unit -> end_tick
+        active_crashes: Dict[str, Optional[int]] = {}
+
         for i in range(int(ticks)):
-            sched.schedule_tick(alive)
+            # wall-clock timeout
+            if max_real_seconds and (time.time() - start_time) > float(max_real_seconds):
+                return {"status": "TIMEOUT", "error": "max_real_seconds exceeded", "run_summary": run_summary}
+
+            # expire crashes whose end_tick <= i
+            to_restore = []
+            for u, e in list(active_crashes.items()):
+                if e is not None and i >= e:
+                    to_restore.append(u)
+            for u in to_restore:
+                active_crashes.pop(u, None)
+                # only restore if not an initial permanent fault
+                if u not in run_summary.get("faulted_units", []):
+                    alive[u] = True
+
+            # apply injections starting on this tick
+            for inj in injections_parsed:
+                if inj.get("start_tick") == i:
+                    u = inj.get("unit")
+                    if not u:
+                        continue
+                    # apply crash
+                    alive[u] = False
+                    if inj.get("permanent") or inj.get("end_tick") is None:
+                        # permanent: record in run_summary.faulted_units
+                        run_summary.setdefault("faulted_units", [])
+                        if u not in run_summary["faulted_units"]:
+                            run_summary["faulted_units"].append(u)
+                    else:
+                        active_crashes[u] = inj.get("end_tick")
+
+            try:
+                sched.schedule_tick(alive)
+            except Exception as e:
+                run_summary["ticks_completed"] = i + 1
+                if until_failure:
+                    return {"status": "FAIL", "error": str(e), "run_summary": run_summary}
+                else:
+                    # record failure but continue
+                    return {"status": "FAIL", "error": str(e), "run_summary": run_summary}
+
             run_summary["ticks_completed"] = i + 1
     except Exception as e:
         return {"status": "FAIL", "error": str(e), "run_summary": run_summary}
@@ -95,6 +163,8 @@ if __name__ == "__main__":
     ap.add_argument("--logs_dir", default="runner_logs")
     ap.add_argument("--capacity_per_unit", type=int, default=2)
     ap.add_argument("--initial_faults", type=int, default=0)
+    ap.add_argument("--until_failure", action="store_true", help="Stop when scheduler raises a mission failure")
+    ap.add_argument("--max_real_seconds", type=float, default=0.0, help="Wall-clock timeout in seconds (0 = disabled)")
     args = ap.parse_args()
 
     result = run_mission(
@@ -103,5 +173,7 @@ if __name__ == "__main__":
         logs_dir=args.logs_dir,
         capacity_per_unit=args.capacity_per_unit,
         initial_faults=args.initial_faults,
+        until_failure=args.until_failure,
+        max_real_seconds=args.max_real_seconds,
     )
     print(json.dumps(result))
