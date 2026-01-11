@@ -112,6 +112,52 @@ def inj_summary(m: Dict[str, Any], tick_ms: float) -> List[Dict[str, Any]]:
     return out
 
 
+def injection_impact_checks(m: Dict[str, Any], capacity_per_unit: int = 2) -> List[str]:
+    """Simulate injection windows and report if injections would reduce capacity below requirements."""
+    warnings: List[str] = []
+    units = m.get("units", []) or []
+    n_devices = int(m.get("fleet_devices", len(units)))
+    rm = required_map(m)
+    required_total = int(sum(int(v) for v in rm.values()))
+    tick_ms = float(m.get("tick_ms", 1.0))
+
+    inj = inj_summary(m, tick_ms)
+    if not inj:
+        return warnings
+
+    # Build injection windows: unit -> (start_tick, end_tick_or_none)
+    windows: List[Tuple[str, int, Optional[int]]] = []
+    for ev in inj:
+        u = ev.get("unit")
+        st = int(ev.get("at_tick", 0) or 0)
+        dur = int(ev.get("duration_ticks", 0) or 0)
+        perm = bool(ev.get("permanent", False))
+        if perm or dur == 0:
+            et = None
+        else:
+            et = st + dur
+        windows.append((u, st, et))
+
+    # For each injection event, compute crashed units at its start tick
+    for u0, st0, et0 in windows:
+        crashed = set()
+        for u, st, et in windows:
+            if et is None:
+                # permanent -> active from st onward
+                if st <= st0:
+                    crashed.add(u)
+            else:
+                if st <= st0 < et:
+                    crashed.add(u)
+
+        active_devices = max(0, n_devices - len(crashed))
+        cap_total = active_devices * int(capacity_per_unit)
+        if cap_total < required_total:
+            warnings.append(f"INJECTION_WOULD_CAUSE_SHORTAGE@tick{st0}: crashed={sorted(list(crashed))} active_devices={active_devices} cap_total={cap_total} required={required_total}")
+
+    return warnings
+
+
 def classify_intent(scenario: str) -> str:
     s = (scenario or "").lower()
     if "gap" in s and "recovery" in s:
@@ -224,6 +270,7 @@ def main() -> int:
             "max_domain_weight": float(mxw),
             "failure_injections": inj_summary(m, tick_ms),
             "warnings": heuristic_checks(m, capacity_per_unit=args.capacity_per_unit),
+            "injection_impact": injection_impact_checks(m, capacity_per_unit=args.capacity_per_unit),
         }
         results.append(entry)
 

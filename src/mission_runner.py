@@ -18,6 +18,7 @@ Output:
 import json
 import argparse
 import time
+import os
 from typing import Dict, Any, List, Optional
 
 from scheduler_deadline import DeadlineScheduler
@@ -100,6 +101,13 @@ def run_mission(
         "universal_roles": universal_roles,
     }
 
+    # Ensure logs_dir exists and open injection log
+    try:
+        os.makedirs(logs_dir, exist_ok=True)
+        injection_log_f = open(os.path.join(logs_dir, "injection_log.txt"), "w", encoding="utf-8")
+    except Exception:
+        injection_log_f = None
+
     try:
         start_time = time.time()
         # track active temporary crashes: unit -> end_tick
@@ -110,20 +118,25 @@ def run_mission(
             if max_real_seconds and (time.time() - start_time) > float(max_real_seconds):
                 return {"status": "TIMEOUT", "error": "max_real_seconds exceeded", "run_summary": run_summary}
 
-            # expire crashes whose end_tick <= i
+            # expire crashes whose end_tick <= current scheduler tick (i+1)
             to_restore = []
             for u, e in list(active_crashes.items()):
-                if e is not None and i >= e:
+                if e is not None and (i + 1) >= e:
                     to_restore.append(u)
             for u in to_restore:
                 active_crashes.pop(u, None)
                 # only restore if not an initial permanent fault
                 if u not in run_summary.get("faulted_units", []):
                     alive[u] = True
+                    if 'injection_log_f' in locals() and injection_log_f:
+                        injection_log_f.write(f"tick={i+1}: RESTORE unit={u}\n")
+                        injection_log_f.flush()
+                    print(f"INJECTION: tick={i+1} RESTORE unit={u}")
 
             # apply injections starting on this tick
             for inj in injections_parsed:
-                if inj.get("start_tick") == i:
+                # scheduler.tick will be i+1 inside schedule_tick, so apply when start_tick == i+1
+                if inj.get("start_tick") == (i + 1):
                     u = inj.get("unit")
                     if not u:
                         continue
@@ -136,6 +149,11 @@ def run_mission(
                             run_summary["faulted_units"].append(u)
                     else:
                         active_crashes[u] = inj.get("end_tick")
+                    if 'injection_log_f' in locals() and injection_log_f:
+                        injection_log_f.write(f"tick={i+1}: APPLY crash unit={u} permanent={inj.get('permanent')} end_tick={inj.get('end_tick')}\n")
+                        injection_log_f.flush()
+                    # also print to stdout for CI debugging
+                    print(f"INJECTION: tick={i+1} APPLY unit={u} permanent={inj.get('permanent')} end_tick={inj.get('end_tick')}")
 
             try:
                 sched.schedule_tick(alive)
@@ -152,6 +170,11 @@ def run_mission(
         return {"status": "FAIL", "error": str(e), "run_summary": run_summary}
     finally:
         sched.close()
+        try:
+            if injection_log_f:
+                injection_log_f.close()
+        except Exception:
+            pass
 
     return {"status": "PASS", "error": "", "run_summary": run_summary}
 
