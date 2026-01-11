@@ -42,9 +42,16 @@ jobs:
             for n in $(seq 0 50); do
               d="runner_logs_${bn}_faults${n}"
               if [ -d "$d" ]; then
-                cp "$d"/timeline.csv      "artifacts/timeline_${bn}_faults${n}.csv" || true
-                cp "$d"/matrix.csv        "artifacts/matrix_${bn}_faults${n}.csv" || true
-                cp "$d"/run_summary.json  "artifacts/run_summary_${bn}_faults${n}.json" || true
+                # Generate headless HTML report + PNGs for each runner logs dir
+                python src/report_builder.py --run_dir "$d" --report_type FINAL || true
+                cp "$d"/timeline.csv              "artifacts/timeline_${bn}_faults${n}.csv" || true
+                cp "$d"/assignment_samples.csv   "artifacts/assignment_${bn}_faults${n}.csv" || true
+                cp "$d"/battery_samples.csv      "artifacts/battery_${bn}_faults${n}.csv" || true
+                cp "$d"/events.csv               "artifacts/events_${bn}_faults${n}.csv" || true
+                cp "$d"/summary.json             "artifacts/summary_${bn}_faults${n}.json" || true
+                cp "$d"/report.html              "artifacts/report_${bn}_faults${n}.html" || true
+                cp "$d"/injection_log.txt        "artifacts/injection_${bn}_faults${n}.txt" || true
+                cp "$d"/report_generation.log    "artifacts/reportlog_${bn}_faults${n}.txt" || true
               fi
             done
           done < <(find missions -type f -name 'mission*.json' | sort)
